@@ -174,14 +174,29 @@ function openPanel(title, buildBody) {
 
 // ---------- news item ----------
 
+// Standalone (home-screen) mode keeps target=_blank inside the app shell,
+// so force Safari with the x-safari- scheme there.
+function isStandalone() {
+  return (
+    window.navigator.standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches
+  );
+}
+
 function newsItemNode(item, opts) {
   const li = el('li', 'news-item');
   const top = el('div', 'item-top');
 
   const a = el('a', 'item-link', item.title);
   a.href = item.link;
+  a.rel = 'noopener noreferrer';
   a.target = '_blank';
-  a.rel = 'noopener';
+  if (isStandalone()) {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.location.href = `x-safari-${item.link}`;
+    });
+  }
   top.appendChild(a);
 
   const more = el('button', 'more', '⋯');

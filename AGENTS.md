@@ -42,7 +42,8 @@
 
 ## 확인된 사실 (재검증 불필요)
 
-- Google 뉴스 RSS: `https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko` (전체), 카테고리는 `https://news.google.com/rss/headlines/section/topic/<TOPIC>?hl=ko&gl=KR&ceid=KR:ko` (TOPIC: WORLD/NATION/BUSINESS/TECHNOLOGY/ENTERTAINMENT/SPORTS/SCIENCE/HEALTH). 항목에 `<source>` 태그로 언론사명+도메인 포함.
+- Google 뉴스 RSS: `https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko` (전체), 카테고리는 `https://news.google.com/rss/headlines/section/topic/<TOPIC>?hl=ko&gl=KR&ceid=KR:ko` (TOPIC: WORLD/NATION/BUSINESS/TECHNOLOGY/SCIENCE/ENTERTAINMENT/SPORTS/HEALTH). 항목에 `<source>` 태그로 언론사명+도메인 포함.
+- TECHNOLOGY 와 SCIENCE 는 별개 피드이고 내용도 실제로 다름 (IT=기업·반도체·가상자산, 과학=우주·생명과학·연구). 정치는 topic 피드가 없어 검색 RSS(`정치 when:1d`) 사용.
 - Open-Meteo 날씨: 키 불필요·CORS 허용. 예) `https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.978&current=temperature_2m,weather_code,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia/Seoul`
 - Open-Meteo 미세먼지: 키 불필요. 예) `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=37.5665&longitude=126.978&current=pm10,pm2_5&timezone=Asia/Seoul`
 - Frankfurter 환율: 키 불필요. 예) `https://api.frankfurter.dev/v1/latest?from=USD&to=KRW,JPY,EUR` (구 도메인 frankfurter.app 는 301 리다이렉트 — .dev 사용)
