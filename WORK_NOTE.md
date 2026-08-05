@@ -43,6 +43,17 @@
 - **M6 날씨·미세먼지 위젯**: Open-Meteo forecast + air-quality 를 브라우저에서 직접 호출(키 불필요·CORS 허용). 한 위젯에 기온·날씨·최고/최저 + PM2.5 등급 칩(좋음≤15/보통≤35/나쁨≤75/매우나쁨)·PM10·강수확률. 위젯 헤더 버튼으로 지역 선택(프리셋 7곳 + geolocation). 좌표 키 기준 캐시.
 - **M7 PWA**: manifest.json + icons(192/512, maskable 포함) + iOS 메타 태그. 아이콘은 SVG 를 Edge headless 로 PNG 렌더해 생성(SVG 원본은 삭제).
 - **검증**: 로컬 서버 + Edge headless. 날씨 위젯 실데이터 렌더 확인(31°, 맑음, PM2.5 17 "보통", 강수 82%), manifest·아이콘 3종 HTTP 200, iOS 메타 태그 4종 존재, 가로 오버플로 없음.
+
+## 2026-08-05 — UI 전면 개편 (좌우 스와이프 페이저)
+
+주인님 지시로 하단 탭 구조 폐기. [PLAN.md](PLAN.md) "UI 구성" 절 개정.
+
+- **페이저**: `body` 를 flex 컬럼 + `overflow:hidden` 으로 고정하고, `.pager` 를 `scroll-snap-type: x mandatory` 로 좌우 스와이프. 페이지 = 대시보드 1개 + 활성 카테고리 N개 (스크롤은 페이지 안에서 세로로).
+  - 제목/인디케이터는 `scroll` 이벤트에서 `scrollLeft / clientWidth` 로 현재 인덱스 계산해 동기화(rAF 스로틀).
+- **하단 탭바 제거**, 설정은 헤더 오른쪽 ⚙ 아이콘 → 전체화면 패널.
+- **헤더 아래 칩 줄**: 페이지 인디케이터 + 탭하면 해당 페이지로 이동.
+- **날씨**: `geolocation.getCurrentPosition` 으로 **휴대폰 위치 자동 취득**(8초 타임아웃, 10분 캐시) → 그 좌표의 현재 날씨 + **7일 예보**(요일별 아이콘·최고·최저). 실패 시 저장된 위치 → 서울 폴백. 지역 프리셋 목록은 제거.
+- **검증**: DOM 진단 — 탭바 없음 확인, 페이지 11개(대시보드+카테고리 10), pager scrollWidth/clientWidth = 11.0, snap type `x mandatory`, 주간 셀 7개(오늘 목 금 토 일 월 화), 스와이프 후 제목·활성 칩이 "주요"로 전환, 세로/가로 오버플로 없음. 실화면 스크린샷으로 레이아웃 확인.
 - ⚠️ **미배포 — 막힌 지점**: 로컬 커밋 2개(1a4ad65, 9cf4e0d)만 존재.
   - `gh` CLI 미설치. `winget install GitHub.cli` 는 비대화형 세션에서 진행되지 않음(응답 없음, 미설치 확인).
   - Windows 자격증명에 `git:https://github.com` 항목은 존재하나 소유 계정 미확인. `git ls-remote https://github.com/jayhouse/news-feed.git` → "Repository not found" (인증 프롬프트는 없음).

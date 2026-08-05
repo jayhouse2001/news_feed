@@ -18,19 +18,9 @@ function defaultSettings() {
       { id: 'w-links', type: 'links', config: {} },
     ],
     links: [],
-    place: { name: '서울', lat: 37.5665, lon: 126.978 },
+    place: null,
   };
 }
-
-const PLACES = [
-  { name: '서울', lat: 37.5665, lon: 126.978 },
-  { name: '판교', lat: 37.3947, lon: 127.1112 },
-  { name: '부산', lat: 35.1796, lon: 129.0756 },
-  { name: '대전', lat: 36.3504, lon: 127.3845 },
-  { name: '대구', lat: 35.8714, lon: 128.6014 },
-  { name: '광주', lat: 35.1595, lon: 126.8526 },
-  { name: '제주', lat: 33.4996, lon: 126.5312 },
-];
 
 function loadSettings() {
   try {
@@ -49,7 +39,6 @@ function save() {
 }
 
 let newsData = { updatedAt: null, categories: [] };
-let activeCategory = null;
 
 // ---------- helpers ----------
 
@@ -127,7 +116,7 @@ function sortItems(items, mode) {
   return arr;
 }
 
-// ---------- action sheet / overlay ----------
+// ---------- overlay: sheet + panel ----------
 
 function overlayRoot() {
   return document.getElementById('overlay-root');
@@ -173,7 +162,7 @@ function openPanel(title, buildBody) {
   const done = el('button', 'panel-done', '완료');
   done.addEventListener('click', () => {
     closeOverlay();
-    rerender();
+    rebuildPages();
   });
   head.appendChild(done);
   panel.appendChild(head);
@@ -239,7 +228,7 @@ function openItemSheet(item) {
       onClick() {
         addUnique(S.blockedSources, item.source);
         save();
-        rerender();
+        rebuildPages();
       },
     });
   }
@@ -250,74 +239,12 @@ function openItemSheet(item) {
       if (k && k.trim()) {
         addUnique(S.blockedKeywords, k.trim());
         save();
-        rerender();
+        rebuildPages();
       }
     },
   });
   openSheet('이 기사에 대해', actions);
 }
-
-// ---------- news view ----------
-
-function renderCategories() {
-  const nav = document.getElementById('cats');
-  nav.textContent = '';
-  const cats = enabledCategories();
-  if (cats.length && !cats.some((c) => c.id === activeCategory)) {
-    activeCategory = cats[0].id;
-  }
-  for (const cat of cats) {
-    const btn = el('button', 'cat' + (cat.id === activeCategory ? ' on' : ''), cat.name);
-    btn.addEventListener('click', () => {
-      activeCategory = cat.id;
-      renderNews();
-    });
-    nav.appendChild(btn);
-  }
-}
-
-function renderList() {
-  const list = document.getElementById('news-list');
-  const empty = document.getElementById('news-empty');
-  list.textContent = '';
-  const cat = newsData.categories.find((c) => c.id === activeCategory);
-  const items = cat ? sortItems(visibleItems(cat), getSort(activeCategory)) : [];
-  empty.hidden = items.length > 0;
-  document.getElementById('cat-count').textContent = `${items.length}건`;
-  document.getElementById('sort-btn').textContent =
-    `정렬: ${SORT_LABEL[getSort(activeCategory)]} ▾`;
-  for (const item of items) list.appendChild(newsItemNode(item));
-}
-
-function renderNews() {
-  renderCategories();
-  renderList();
-}
-
-function setupSortButton() {
-  document.getElementById('sort-btn').addEventListener('click', () => {
-    const cur = getSort(activeCategory);
-    openSheet(
-      '정렬 기준',
-      Object.keys(SORT_LABEL).map((mode) => ({
-        label: (mode === cur ? '✓ ' : '') + SORT_LABEL[mode],
-        onClick() {
-          S.sortBy[activeCategory] = mode;
-          save();
-          renderNews();
-        },
-      }))
-    );
-  });
-}
-
-// ---------- dashboard widgets ----------
-
-const WIDGET_TYPES = {
-  weather: { name: '날씨 · 미세먼지' },
-  important: { name: '중요 뉴스' },
-  links: { name: '바로가기' },
-};
 
 // ---------- weather / air quality ----------
 
@@ -331,15 +258,51 @@ const WEATHER_CODES = {
   95: '뇌우', 96: '뇌우·우박', 99: '뇌우·우박',
 };
 
+const WEATHER_ICONS = {
+  0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
+  45: '🌫️', 48: '🌫️',
+  51: '🌦️', 53: '🌦️', 55: '🌦️',
+  61: '🌧️', 63: '🌧️', 65: '🌧️',
+  71: '🌨️', 73: '🌨️', 75: '❄️', 77: '🌨️',
+  80: '🌦️', 81: '🌧️', 82: '⛈️',
+  95: '⛈️', 96: '⛈️', 99: '⛈️',
+};
+
+const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+
 function pmGrade(pm25) {
   if (pm25 == null) return null;
-  if (pm25 <= 15) return { label: '좋음', good: true };
-  if (pm25 <= 35) return { label: '보통', good: true };
-  if (pm25 <= 75) return { label: '나쁨', good: false };
-  return { label: '매우나쁨', good: false };
+  if (pm25 <= 15) return { label: '좋음', cls: 'good' };
+  if (pm25 <= 35) return { label: '보통', cls: 'good' };
+  if (pm25 <= 75) return { label: '나쁨', cls: 'bad' };
+  return { label: '매우나쁨', cls: 'bad' };
 }
 
 let weatherCache = null;
+
+// Resolve coordinates: device location first, fall back to the saved place.
+function resolvePlace() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(S.place || { name: '서울', lat: 37.5665, lon: 126.978 });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const p = {
+          name: '현재 위치',
+          lat: Math.round(pos.coords.latitude * 1e4) / 1e4,
+          lon: Math.round(pos.coords.longitude * 1e4) / 1e4,
+        };
+        S.place = p;
+        save();
+        resolve(p);
+      },
+      () => resolve(S.place || { name: '서울', lat: 37.5665, lon: 126.978 }),
+      { timeout: 8000, maximumAge: 600000 }
+    );
+  });
+}
 
 async function fetchWeather(place) {
   const key = `${place.lat},${place.lon}`;
@@ -347,8 +310,8 @@ async function fetchWeather(place) {
 
   const wx = `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}` +
     '&current=temperature_2m,weather_code' +
-    '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
-    '&timezone=Asia%2FSeoul&forecast_days=1';
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+    '&timezone=Asia%2FSeoul&forecast_days=7';
   const aq = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${place.lat}&longitude=${place.lon}` +
     '&current=pm10,pm2_5&timezone=Asia%2FSeoul&forecast_days=1';
 
@@ -357,12 +320,24 @@ async function fetchWeather(place) {
     fetch(aq).then((r) => r.json()).catch(() => null),
   ]);
 
+  const daily = [];
+  const d = wxRes.daily;
+  if (d?.time) {
+    for (let i = 0; i < d.time.length; i++) {
+      daily.push({
+        date: d.time[i],
+        code: d.weather_code?.[i],
+        max: d.temperature_2m_max?.[i],
+        min: d.temperature_2m_min?.[i],
+        rain: d.precipitation_probability_max?.[i],
+      });
+    }
+  }
+
   const data = {
     temp: wxRes.current?.temperature_2m,
     code: wxRes.current?.weather_code,
-    max: wxRes.daily?.temperature_2m_max?.[0],
-    min: wxRes.daily?.temperature_2m_min?.[0],
-    rain: wxRes.daily?.precipitation_probability_max?.[0],
+    daily,
     pm10: aqRes?.current?.pm10,
     pm25: aqRes?.current?.pm2_5,
   };
@@ -370,21 +345,28 @@ async function fetchWeather(place) {
   return data;
 }
 
-function renderWeatherWidget(card, widget) {
-  const place = S.place || PLACES[0];
-  const head = card.querySelector('.w-head span');
+function renderWeatherWidget(card) {
   const body = el('div', 'weather-body');
-  body.appendChild(el('p', 'w-empty', '불러오는 중…'));
+  body.appendChild(el('p', 'w-empty', '위치 확인 중…'));
   card.appendChild(body);
 
-  fetchWeather(place)
+  const nameSlot = card.querySelector('.w-place');
+
+  resolvePlace()
+    .then((place) => {
+      if (nameSlot) nameSlot.textContent = place.name;
+      return fetchWeather(place);
+    })
     .then((d) => {
       body.textContent = '';
+
       const row = el('div', 'weather-row');
+      row.appendChild(el('span', 'wx-icon', WEATHER_ICONS[d.code] || '🌡️'));
       row.appendChild(el('span', 'temp', d.temp != null ? `${Math.round(d.temp)}°` : '—'));
+      const today = d.daily[0];
       const cond = [
         WEATHER_CODES[d.code] || '',
-        d.max != null && d.min != null ? `최고 ${Math.round(d.max)}° 최저 ${Math.round(d.min)}°` : '',
+        today && today.max != null ? `최고 ${Math.round(today.max)}° 최저 ${Math.round(today.min)}°` : '',
       ].filter(Boolean).join(' · ');
       row.appendChild(el('span', 'cond', cond));
       body.appendChild(row);
@@ -393,17 +375,26 @@ function renderWeatherWidget(card, widget) {
       const grade = pmGrade(d.pm25);
       if (grade) {
         chips.appendChild(
-          el('span', 'chip' + (grade.good ? ' good' : ' bad'),
-            `미세먼지 ${grade.label} · PM2.5 ${Math.round(d.pm25)}`)
+          el('span', `chip ${grade.cls}`, `미세먼지 ${grade.label} · PM2.5 ${Math.round(d.pm25)}`)
         );
       }
-      if (d.pm10 != null) {
-        chips.appendChild(el('span', 'chip', `PM10 ${Math.round(d.pm10)}`));
-      }
-      if (d.rain != null) {
-        chips.appendChild(el('span', 'chip', `강수 ${d.rain}%`));
-      }
+      if (d.pm10 != null) chips.appendChild(el('span', 'chip', `PM10 ${Math.round(d.pm10)}`));
+      if (today?.rain != null) chips.appendChild(el('span', 'chip', `강수 ${today.rain}%`));
       body.appendChild(chips);
+
+      if (d.daily.length > 1) {
+        const week = el('div', 'week');
+        d.daily.forEach((day, i) => {
+          const cell = el('div', 'wday' + (i === 0 ? ' today' : ''));
+          const dt = new Date(day.date + 'T00:00:00');
+          cell.appendChild(el('span', 'wd-name', i === 0 ? '오늘' : DAY_NAMES[dt.getDay()]));
+          cell.appendChild(el('span', 'wd-icon', WEATHER_ICONS[day.code] || '🌡️'));
+          cell.appendChild(el('span', 'wd-max', day.max != null ? `${Math.round(day.max)}°` : '—'));
+          cell.appendChild(el('span', 'wd-min', day.min != null ? `${Math.round(day.min)}°` : '—'));
+          week.appendChild(cell);
+        });
+        body.appendChild(week);
+      }
     })
     .catch(() => {
       body.textContent = '';
@@ -411,37 +402,13 @@ function renderWeatherWidget(card, widget) {
     });
 }
 
-function configureWeather() {
-  const actions = PLACES.map((p) => ({
-    label: (S.place?.name === p.name ? '✓ ' : '') + p.name,
-    onClick() {
-      S.place = { ...p };
-      weatherCache = null;
-      save();
-      renderDashboard();
-    },
-  }));
-  actions.push({
-    label: '📍 현재 위치 사용',
-    onClick() {
-      if (!navigator.geolocation) return;
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          S.place = {
-            name: '현재 위치',
-            lat: Math.round(pos.coords.latitude * 1e4) / 1e4,
-            lon: Math.round(pos.coords.longitude * 1e4) / 1e4,
-          };
-          weatherCache = null;
-          save();
-          renderDashboard();
-        },
-        () => alert('위치를 가져오지 못했습니다.')
-      );
-    },
-  });
-  openSheet('지역', actions);
-}
+// ---------- dashboard widgets ----------
+
+const WIDGET_TYPES = {
+  weather: { name: '날씨 · 미세먼지' },
+  important: { name: '중요 뉴스' },
+  links: { name: '바로가기' },
+};
 
 function widgetFrame(widget, index) {
   const card = el('div', 'widget');
@@ -450,9 +417,7 @@ function widgetFrame(widget, index) {
 
   const btns = el('span', 'w-btns');
   if (widget.type === 'weather') {
-    const loc = el('button', 'w-btn', S.place?.name || '지역');
-    loc.addEventListener('click', configureWeather);
-    btns.appendChild(loc);
+    btns.appendChild(el('span', 'w-place', '…'));
   }
   if (widget.type === 'important') {
     const cfg = el('button', 'w-btn', '설정');
@@ -467,9 +432,9 @@ function widgetFrame(widget, index) {
   const menu = el('button', 'w-btn', '⋯');
   menu.addEventListener('click', () => {
     openSheet(WIDGET_TYPES[widget.type]?.name || widget.type, [
-      { label: '△ 위로', onClick() { moveItem(S.widgets, index, index - 1); save(); renderDashboard(); } },
-      { label: '▽ 아래로', onClick() { moveItem(S.widgets, index, index + 1); save(); renderDashboard(); } },
-      { label: '✕ 위젯 삭제', onClick() { S.widgets.splice(index, 1); save(); renderDashboard(); } },
+      { label: '△ 위로', onClick() { moveItem(S.widgets, index, index - 1); save(); rebuildPages(); } },
+      { label: '▽ 아래로', onClick() { moveItem(S.widgets, index, index + 1); save(); rebuildPages(); } },
+      { label: '✕ 위젯 삭제', onClick() { S.widgets.splice(index, 1); save(); rebuildPages(); } },
     ]);
   });
   btns.appendChild(menu);
@@ -478,7 +443,6 @@ function widgetFrame(widget, index) {
   return card;
 }
 
-// near-duplicate removal across categories for the important widget
 function titleTokens(title) {
   return new Set(
     title.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length >= 2)
@@ -495,9 +459,7 @@ function similar(a, b) {
 function importantItems(count) {
   const pool = [];
   for (const cat of enabledCategories()) {
-    for (const item of visibleItems(cat)) {
-      pool.push({ item, catName: cat.name });
-    }
+    for (const item of visibleItems(cat)) pool.push({ item, catName: cat.name });
   }
   pool.sort((a, b) => b.item.score - a.item.score);
   const picked = [];
@@ -526,7 +488,7 @@ function configureImportant(widget) {
     onClick() {
       widget.config = { ...widget.config, count: n };
       save();
-      renderDashboard();
+      rebuildPages();
     },
   })));
 }
@@ -540,39 +502,259 @@ function renderLinksWidget(card) {
   for (const link of S.links) {
     const a = el('a', 'linkitem');
     a.href = link.url;
-    const ic = el('span', 'ic', [...link.name][0] || '?');
-    a.appendChild(ic);
+    a.appendChild(el('span', 'ic', [...link.name][0] || '?'));
     a.appendChild(el('span', 'lb', link.name));
     grid.appendChild(a);
   }
   card.appendChild(grid);
 }
 
-function renderDashboard() {
-  const box = document.getElementById('widgets');
-  box.textContent = '';
+function buildDashboard() {
+  const page = el('section', 'page');
+  const inner = el('div', 'page-inner');
   S.widgets.forEach((widget, i) => {
     const card = widgetFrame(widget, i);
-    if (widget.type === 'weather') renderWeatherWidget(card, widget);
+    if (widget.type === 'weather') renderWeatherWidget(card);
     else if (widget.type === 'important') renderImportantWidget(card, widget);
     else if (widget.type === 'links') renderLinksWidget(card);
-    box.appendChild(card);
+    inner.appendChild(card);
+  });
+  const add = el('button', 'add-dashed', '＋ 위젯 추가');
+  add.addEventListener('click', () => {
+    openSheet('위젯 추가', Object.entries(WIDGET_TYPES).map(([type, def]) => ({
+      label: def.name,
+      onClick() {
+        S.widgets.push({
+          id: `w-${Date.now()}`,
+          type,
+          config: type === 'important' ? { count: 5 } : {},
+        });
+        save();
+        rebuildPages();
+      },
+    })));
+  });
+  inner.appendChild(add);
+  page.appendChild(inner);
+  return page;
+}
+
+// ---------- category page ----------
+
+function buildCategoryPage(cat) {
+  const page = el('section', 'page');
+  const inner = el('div', 'page-inner');
+
+  const sortRow = el('div', 'sortrow');
+  const sortBtn = el('button', 'sort-btn', `정렬: ${SORT_LABEL[getSort(cat.id)]} ▾`);
+  sortBtn.addEventListener('click', () => {
+    const cur = getSort(cat.id);
+    openSheet('정렬 기준', Object.keys(SORT_LABEL).map((mode) => ({
+      label: (mode === cur ? '✓ ' : '') + SORT_LABEL[mode],
+      onClick() {
+        S.sortBy[cat.id] = mode;
+        save();
+        rebuildPages();
+      },
+    })));
+  });
+  sortRow.appendChild(sortBtn);
+
+  const items = sortItems(visibleItems(cat), getSort(cat.id));
+  sortRow.appendChild(el('span', null, `${items.length}건`));
+  inner.appendChild(sortRow);
+
+  if (!items.length) {
+    inner.appendChild(el('p', 'placeholder', '표시할 기사가 없습니다.'));
+  } else {
+    const ul = el('ul', 'news-list');
+    for (const item of items) ul.appendChild(newsItemNode(item));
+    inner.appendChild(ul);
+  }
+
+  page.appendChild(inner);
+  return page;
+}
+
+// ---------- pager ----------
+
+let pages = [];
+
+function currentIndex() {
+  const pager = document.getElementById('pager');
+  return Math.round(pager.scrollLeft / pager.clientWidth);
+}
+
+function syncPageIndicator() {
+  const i = currentIndex();
+  const page = pages[i];
+  if (!page) return;
+  document.getElementById('page-title').textContent = page.title;
+  document.querySelectorAll('.pagedots .dot').forEach((d, n) => {
+    d.classList.toggle('on', n === i);
+  });
+  const active = document.querySelector('.pagedots .dot.on');
+  if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
+function rebuildPages() {
+  const pager = document.getElementById('pager');
+  const keep = currentIndex();
+  pager.textContent = '';
+
+  pages = [{ title: '대시보드', node: buildDashboard() }];
+  for (const cat of enabledCategories()) {
+    pages.push({ title: cat.name, node: buildCategoryPage(cat) });
+  }
+  for (const p of pages) pager.appendChild(p.node);
+
+  const dots = document.getElementById('pagedots');
+  dots.textContent = '';
+  pages.forEach((p, i) => {
+    const dot = el('button', 'dot' + (i === 0 ? ' on' : ''), p.title);
+    dot.addEventListener('click', () => {
+      pager.scrollTo({ left: i * pager.clientWidth, behavior: 'smooth' });
+    });
+    dots.appendChild(dot);
+  });
+
+  const target = Math.min(keep, pages.length - 1);
+  pager.scrollLeft = target * pager.clientWidth;
+  syncPageIndicator();
+}
+
+// ---------- settings panel ----------
+
+function chipList(box, arr, emptyText) {
+  box.textContent = '';
+  if (!arr.length) {
+    box.appendChild(el('span', 'w-empty', emptyText));
+    return;
+  }
+  arr.forEach((v, i) => {
+    const chip = el('span', 'x-chip');
+    chip.appendChild(el('span', null, v));
+    const x = el('button', 'x', '✕');
+    x.setAttribute('aria-label', `${v} 삭제`);
+    x.addEventListener('click', () => {
+      arr.splice(i, 1);
+      save();
+      openSettings();
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
   });
 }
 
-function setupAddWidget() {
-  document.getElementById('add-widget').addEventListener('click', () => {
-    openSheet(
-      '위젯 추가',
-      Object.entries(WIDGET_TYPES).map(([type, def]) => ({
-        label: def.name,
-        onClick() {
-          S.widgets.push({ id: `w-${Date.now()}`, type, config: type === 'important' ? { count: 5 } : {} });
-          save();
-          renderDashboard();
-        },
-      }))
-    );
+function addRow(placeholder, onAdd, listId) {
+  const row = el('div', 'add-form');
+  const input = el('input', 'in');
+  input.placeholder = placeholder;
+  if (listId) input.setAttribute('list', listId);
+  const btn = el('button', 'primary', '추가');
+  const commit = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    onAdd(v);
+    input.value = '';
+    save();
+    openSettings();
+  };
+  btn.addEventListener('click', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') commit();
+  });
+  row.appendChild(input);
+  row.appendChild(btn);
+  return row;
+}
+
+function knownSourcesDatalist() {
+  const dl = el('datalist');
+  dl.id = 'known-sources';
+  const seen = new Set();
+  for (const cat of newsData.categories) {
+    for (const item of cat.items) {
+      if (item.source && !seen.has(item.source)) {
+        seen.add(item.source);
+        const opt = el('option');
+        opt.value = item.source;
+        dl.appendChild(opt);
+      }
+    }
+  }
+  return dl;
+}
+
+function openSettings() {
+  openPanel('설정', (body) => {
+    body.appendChild(knownSourcesDatalist());
+
+    // categories: on/off + order (also controls page order)
+    const catSec = el('div', 'set-section');
+    catSec.appendChild(el('div', 'set-title', '카테고리 (페이지 표시 · 순서)'));
+    orderedCategories().forEach((cat, i, all) => {
+      const row = el('div', 'set-row');
+      const label = el('label', 'set-label');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = !S.categoryDisabled.includes(cat.id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) S.categoryDisabled = S.categoryDisabled.filter((id) => id !== cat.id);
+        else addUnique(S.categoryDisabled, cat.id);
+        save();
+        openSettings();
+      });
+      label.appendChild(cb);
+      label.appendChild(el('span', null, cat.name));
+      row.appendChild(label);
+      const mk = (t, fn, disabled) => {
+        const b = el('button', 'w-btn', t);
+        b.disabled = disabled;
+        b.addEventListener('click', fn);
+        row.appendChild(b);
+      };
+      const order = all.map((c) => c.id);
+      mk('△', () => { moveItem(order, i, i - 1); S.categoryOrder = order; save(); openSettings(); }, i === 0);
+      mk('▽', () => { moveItem(order, i, i + 1); S.categoryOrder = order; save(); openSettings(); }, i === all.length - 1);
+      catSec.appendChild(row);
+    });
+    body.appendChild(catSec);
+
+    const bsSec = el('div', 'set-section');
+    bsSec.appendChild(el('div', 'set-title', '차단한 언론사'));
+    const bsBox = el('div', 'chipbox');
+    chipList(bsBox, S.blockedSources, '없음 — 기사의 ⋯ 버튼 또는 아래에서 추가');
+    bsSec.appendChild(bsBox);
+    bsSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.blockedSources, v), 'known-sources'));
+    body.appendChild(bsSec);
+
+    const bkSec = el('div', 'set-section');
+    bkSec.appendChild(el('div', 'set-title', '차단한 키워드'));
+    const bkBox = el('div', 'chipbox');
+    chipList(bkBox, S.blockedKeywords, '없음');
+    bkSec.appendChild(bkBox);
+    bkSec.appendChild(addRow('키워드', (v) => addUnique(S.blockedKeywords, v)));
+    body.appendChild(bkSec);
+
+    const psSec = el('div', 'set-section');
+    psSec.appendChild(el('div', 'set-title', "선호 언론사 ('언론사 우선' 정렬 순위)"));
+    S.preferredSources.forEach((src, i) => {
+      const row = el('div', 'set-row');
+      row.appendChild(el('span', 'set-label', `${i + 1}. ${src}`));
+      const mk = (t, fn) => {
+        const b = el('button', 'w-btn', t);
+        b.addEventListener('click', fn);
+        row.appendChild(b);
+      };
+      mk('△', () => { moveItem(S.preferredSources, i, i - 1); save(); openSettings(); });
+      mk('▽', () => { moveItem(S.preferredSources, i, i + 1); save(); openSettings(); });
+      mk('✕', () => { S.preferredSources.splice(i, 1); save(); openSettings(); });
+      psSec.appendChild(row);
+    });
+    if (!S.preferredSources.length) psSec.appendChild(el('p', 'w-empty', '없음'));
+    psSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.preferredSources, v), 'known-sources'));
+    body.appendChild(psSec);
   });
 }
 
@@ -639,198 +821,65 @@ function openLinkEditor() {
   });
 }
 
-// ---------- settings view ----------
+// ---------- data loading ----------
 
-function chipList(box, arr, emptyText) {
-  box.textContent = '';
-  if (!arr.length) {
-    box.appendChild(el('span', 'w-empty', emptyText));
-    return;
+function showUpdatedAt() {
+  document.getElementById('updated-at').textContent =
+    newsData.updatedAt ? relTime(newsData.updatedAt) : '';
+}
+
+async function loadNews() {
+  const res = await fetch(`data/news.json?t=${Date.now()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+let refreshing = false;
+
+async function refreshNews() {
+  if (refreshing) return;
+  refreshing = true;
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  const label = document.getElementById('updated-at');
+  label.textContent = '업데이트 중…';
+  try {
+    newsData = await loadNews();
+    rebuildPages();
+    showUpdatedAt();
+  } catch {
+    label.textContent = '업데이트 실패';
+    setTimeout(showUpdatedAt, 2000);
+  } finally {
+    btn.classList.remove('spinning');
+    refreshing = false;
   }
-  arr.forEach((v, i) => {
-    const chip = el('span', 'x-chip');
-    chip.appendChild(el('span', null, v));
-    const x = el('button', 'x', '✕');
-    x.setAttribute('aria-label', `${v} 삭제`);
-    x.addEventListener('click', () => {
-      arr.splice(i, 1);
-      save();
-      rerender();
-    });
-    chip.appendChild(x);
-    box.appendChild(chip);
-  });
-}
-
-function addRow(placeholder, onAdd, listId) {
-  const row = el('div', 'add-form');
-  const input = el('input', 'in');
-  input.placeholder = placeholder;
-  if (listId) input.setAttribute('list', listId);
-  const btn = el('button', 'primary', '추가');
-  const commit = () => {
-    const v = input.value.trim();
-    if (!v) return;
-    onAdd(v);
-    input.value = '';
-    save();
-    rerender();
-  };
-  btn.addEventListener('click', commit);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') commit();
-  });
-  row.appendChild(input);
-  row.appendChild(btn);
-  return row;
-}
-
-function knownSourcesDatalist() {
-  const dl = el('datalist');
-  dl.id = 'known-sources';
-  const seen = new Set();
-  for (const cat of newsData.categories) {
-    for (const item of cat.items) {
-      if (item.source && !seen.has(item.source)) {
-        seen.add(item.source);
-        const opt = el('option');
-        opt.value = item.source;
-        dl.appendChild(opt);
-      }
-    }
-  }
-  return dl;
-}
-
-function renderSettings() {
-  const body = document.getElementById('settings-body');
-  body.textContent = '';
-  body.appendChild(knownSourcesDatalist());
-
-  // categories: on/off + order
-  const catSec = el('div', 'set-section');
-  catSec.appendChild(el('div', 'set-title', '카테고리 (표시 여부 · 순서)'));
-  orderedCategories().forEach((cat, i, all) => {
-    const row = el('div', 'set-row');
-    const label = el('label', 'set-label');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = !S.categoryDisabled.includes(cat.id);
-    cb.addEventListener('change', () => {
-      if (cb.checked) S.categoryDisabled = S.categoryDisabled.filter((id) => id !== cat.id);
-      else addUnique(S.categoryDisabled, cat.id);
-      save();
-      rerender();
-    });
-    label.appendChild(cb);
-    label.appendChild(el('span', null, cat.name));
-    row.appendChild(label);
-    const mk = (t, fn, disabled) => {
-      const b = el('button', 'w-btn', t);
-      b.disabled = disabled;
-      b.addEventListener('click', fn);
-      row.appendChild(b);
-    };
-    const order = all.map((c) => c.id);
-    mk('△', () => { moveItem(order, i, i - 1); S.categoryOrder = order; save(); rerender(); }, i === 0);
-    mk('▽', () => { moveItem(order, i, i + 1); S.categoryOrder = order; save(); rerender(); }, i === all.length - 1);
-    catSec.appendChild(row);
-  });
-  body.appendChild(catSec);
-
-  // blocked sources
-  const bsSec = el('div', 'set-section');
-  bsSec.appendChild(el('div', 'set-title', '차단한 언론사'));
-  const bsBox = el('div', 'chipbox');
-  chipList(bsBox, S.blockedSources, '없음 — 기사의 ⋯ 버튼 또는 아래에서 추가');
-  bsSec.appendChild(bsBox);
-  bsSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.blockedSources, v), 'known-sources'));
-  body.appendChild(bsSec);
-
-  // blocked keywords
-  const bkSec = el('div', 'set-section');
-  bkSec.appendChild(el('div', 'set-title', '차단한 키워드'));
-  const bkBox = el('div', 'chipbox');
-  chipList(bkBox, S.blockedKeywords, '없음');
-  bkSec.appendChild(bkBox);
-  bkSec.appendChild(addRow('키워드', (v) => addUnique(S.blockedKeywords, v)));
-  body.appendChild(bkSec);
-
-  // preferred sources (for '언론사 우선' sort)
-  const psSec = el('div', 'set-section');
-  psSec.appendChild(el('div', 'set-title', "선호 언론사 ('언론사 우선' 정렬 순위)"));
-  S.preferredSources.forEach((src, i) => {
-    const row = el('div', 'set-row');
-    row.appendChild(el('span', 'set-label', `${i + 1}. ${src}`));
-    const mk = (t, fn) => {
-      const b = el('button', 'w-btn', t);
-      b.addEventListener('click', fn);
-      row.appendChild(b);
-    };
-    mk('△', () => { moveItem(S.preferredSources, i, i - 1); save(); rerender(); });
-    mk('▽', () => { moveItem(S.preferredSources, i, i + 1); save(); rerender(); });
-    mk('✕', () => { S.preferredSources.splice(i, 1); save(); rerender(); });
-    psSec.appendChild(row);
-  });
-  if (!S.preferredSources.length) psSec.appendChild(el('p', 'w-empty', '없음'));
-  psSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.preferredSources, v), 'known-sources'));
-  body.appendChild(psSec);
-}
-
-// ---------- tabs ----------
-
-function switchTab(view) {
-  document.querySelectorAll('.tabbar .tab').forEach((t) => {
-    t.classList.toggle('on', t.dataset.view === view);
-    if (t.dataset.view === view) {
-      document.getElementById('appbar-title').textContent = t.dataset.title;
-    }
-  });
-  for (const v of document.querySelectorAll('main .view')) {
-    v.hidden = v.id !== `view-${view}`;
-  }
-  if (location.hash !== `#${view}`) history.replaceState(null, '', `#${view}`);
-}
-
-function setupTabs() {
-  document.querySelectorAll('.tabbar .tab').forEach((tab) => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.view));
-  });
 }
 
 // ---------- boot ----------
 
-function rerender() {
-  renderDashboard();
-  renderNews();
-  renderSettings();
-}
-
 async function main() {
-  setupTabs();
-  setupSortButton();
-  setupAddWidget();
+  document.getElementById('settings-btn').addEventListener('click', openSettings);
+  document.getElementById('refresh-btn').addEventListener('click', refreshNews);
 
   try {
-    if (window.__NEWS_DATA__) {
-      newsData = window.__NEWS_DATA__;
-    } else {
-      const res = await fetch('data/news.json', { cache: 'no-cache' });
-      newsData = await res.json();
-    }
+    newsData = window.__NEWS_DATA__ || (await loadNews());
   } catch {
-    document.getElementById('news-empty').hidden = false;
+    newsData = { updatedAt: null, categories: [] };
   }
 
-  if (newsData.updatedAt) {
-    document.getElementById('updated-at').textContent = `업데이트 ${relTime(newsData.updatedAt)}`;
-  }
-  activeCategory = enabledCategories()[0]?.id ?? null;
-  rerender();
+  showUpdatedAt();
+  rebuildPages();
 
-  const initial =
-    new URLSearchParams(location.search).get('tab') || location.hash.replace('#', '');
-  switchTab(['dashboard', 'news', 'settings'].includes(initial) ? initial : 'dashboard');
+  const pager = document.getElementById('pager');
+  let raf = 0;
+  pager.addEventListener('scroll', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(syncPageIndicator);
+  });
+  window.addEventListener('resize', () => {
+    pager.scrollLeft = currentIndex() * pager.clientWidth;
+  });
 }
 
 main();

@@ -10,42 +10,36 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="뉴스">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <header class="appbar">
-    <h1 id="appbar-title">대시보드</h1>
-    <span id="updated-at" class="updated"></span>
+    <h1 id="page-title">대시보드</h1>
+    <button id="refresh-btn" class="icon-btn" aria-label="뉴스 새로고침" title="최신 뉴스로 업데이트">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M20 4v5h-5" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <div class="appbar-right">
+      <span id="updated-at" class="updated"></span>
+      <button id="settings-btn" class="icon-btn" aria-label="설정">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 3.5v2.2M12 18.3v2.2M4.4 8.1l1.9 1.1M17.7 14.8l1.9 1.1M4.4 15.9l1.9-1.1M17.7 9.2l1.9-1.1"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
-  <main>
-    <section id="view-dashboard" class="view">
-      <div id="widgets"></div>
-      <button id="add-widget" class="add-dashed">＋ 위젯 추가</button>
-    </section>
+  <nav id="pagedots" class="pagedots" aria-label="페이지"></nav>
 
-    <section id="view-news" class="view" hidden>
-      <nav id="cats" class="cats" aria-label="카테고리"></nav>
-      <div class="sortrow">
-        <button id="sort-btn" class="sort-btn">정렬: 최신순 ▾</button>
-        <span id="cat-count"></span>
-      </div>
-      <ul id="news-list" class="news-list"></ul>
-      <p id="news-empty" class="placeholder" hidden>표시할 기사가 없습니다.</p>
-    </section>
-
-    <section id="view-settings" class="view" hidden>
-      <div id="settings-body"></div>
-    </section>
-  </main>
-
-  <nav class="tabbar" aria-label="주 메뉴">
-    <button class="tab on" data-view="dashboard" data-title="대시보드">▦<span>대시보드</span></button>
-    <button class="tab" data-view="news" data-title="뉴스">📰<span>뉴스</span></button>
-    <button class="tab" data-view="settings" data-title="설정">⚙<span>설정</span></button>
-  </nav>
+  <div id="pager" class="pager"></div>
 
   <div id="overlay-root" hidden></div>
 
