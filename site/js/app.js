@@ -190,14 +190,18 @@ function newsItemNode(item, opts) {
 
   const a = el('a', 'item-link', item.title);
   a.href = item.link;
-  a.rel = 'noopener noreferrer';
-  a.target = '_blank';
-  if (isStandalone()) {
-    a.addEventListener('click', (e) => {
+  a.rel = 'noreferrer';
+  a.addEventListener('click', (e) => {
+    if (isStandalone()) {
+      // iOS gives home-screen apps no back gesture, so keep the article inside
+      // the shell where a back button can dismiss it.
       e.preventDefault();
-      window.location.href = `x-safari-${item.link}`;
-    });
-  }
+      openReader(item);
+    } else {
+      // Safari: same tab, and the edge swipe goes back to this exact spot.
+      saveViewState();
+    }
+  });
   top.appendChild(a);
 
   const more = el('button', 'more', '⋯');
@@ -218,6 +222,59 @@ function newsItemNode(item, opts) {
   );
   li.appendChild(meta);
   return li;
+}
+
+// In-app article viewer for standalone mode. Many publishers refuse framing,
+// so offer Safari as the way out when the frame stays blank.
+function openReader(item) {
+  const root = overlayRoot();
+  root.textContent = '';
+
+  const view = el('div', 'reader');
+  const head = el('div', 'reader-head');
+
+  const back = el('button', 'reader-back', '◀ 목록');
+  back.addEventListener('click', () => history.back());
+  head.appendChild(back);
+  head.appendChild(el('span', 'reader-src', item.source || ''));
+
+  const openSafari = el('button', 'reader-open', 'Safari로 열기');
+  openSafari.addEventListener('click', () => {
+    window.location.href = `x-safari-${item.link}`;
+  });
+  head.appendChild(openSafari);
+  view.appendChild(head);
+
+  const frame = document.createElement('iframe');
+  frame.className = 'reader-frame';
+  frame.src = item.link;
+  frame.referrerPolicy = 'no-referrer';
+  view.appendChild(frame);
+
+  const hint = el('div', 'reader-hint');
+  hint.appendChild(el('p', null, '이 언론사는 앱 안에서 열리지 않습니다.'));
+  const hintBtn = el('button', 'primary', 'Safari로 열기');
+  hintBtn.addEventListener('click', () => {
+    window.location.href = `x-safari-${item.link}`;
+  });
+  hint.appendChild(hintBtn);
+  view.appendChild(hint);
+
+  // if the frame never loads, surface the Safari fallback
+  const timer = setTimeout(() => hint.classList.add('on'), 3500);
+  frame.addEventListener('load', () => clearTimeout(timer));
+
+  root.appendChild(view);
+  root.hidden = false;
+
+  // give the back gesture / button something to pop
+  history.pushState({ reader: true }, '', location.href);
+  const onPop = () => {
+    clearTimeout(timer);
+    closeOverlay();
+    window.removeEventListener('popstate', onPop);
+  };
+  window.addEventListener('popstate', onPop);
 }
 
 function openItemSheet(item) {
@@ -576,6 +633,39 @@ function buildCategoryPage(cat) {
   return page;
 }
 
+// ---------- view state (restored after opening an article) ----------
+
+const VIEW_KEY = 'nf:view:v1';
+
+function saveViewState() {
+  const pager = document.getElementById('pager');
+  const page = pager.children[currentIndex()];
+  try {
+    sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+      index: currentIndex(),
+      scroll: page ? page.scrollTop : 0,
+    }));
+  } catch {
+    // storage unavailable; fall back to opening at the first page
+  }
+}
+
+function restoreViewState() {
+  let st = null;
+  try {
+    st = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null');
+  } catch {
+    st = null;
+  }
+  if (!st) return;
+  const pager = document.getElementById('pager');
+  const index = Math.min(st.index || 0, pager.children.length - 1);
+  pager.scrollLeft = index * pager.clientWidth;
+  const page = pager.children[index];
+  if (page && st.scroll) page.scrollTop = st.scroll;
+  syncPageIndicator();
+}
+
 // ---------- pager ----------
 
 let pages = [];
@@ -870,6 +960,7 @@ async function main() {
 
   showUpdatedAt();
   rebuildPages();
+  restoreViewState();
 
   const pager = document.getElementById('pager');
   let raf = 0;
@@ -879,6 +970,11 @@ async function main() {
   });
   window.addEventListener('resize', () => {
     pager.scrollLeft = currentIndex() * pager.clientWidth;
+  });
+
+  // Safari restores this page from cache on back; scroll position can be lost
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) restoreViewState();
   });
 }
 
