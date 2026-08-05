@@ -723,6 +723,10 @@ function buildDashboard() {
 
 function buildCategoryPage(cat) {
   const page = el('section', 'page');
+  page.dataset.pullRefresh = 'true';
+  const pull = el('div', 'pull-refresh', '아래로 당겨 새로고침');
+  pull.setAttribute('aria-hidden', 'true');
+  page.appendChild(pull);
   const inner = el('div', 'page-inner');
 
   const sortRow = el('div', 'sortrow');
@@ -1198,6 +1202,85 @@ async function refreshNews() {
   }
 }
 
+// ---------- pull to refresh ----------
+
+function setupPullToRefresh() {
+  const pager = document.getElementById('pager');
+  const threshold = 72;
+  let gesture = null;
+
+  pager.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || refreshing) return;
+    const page = e.target.closest('.page[data-pull-refresh="true"]');
+    if (!page || page.scrollTop > 0) return;
+    const touch = e.touches[0];
+    gesture = { page, x: touch.clientX, y: touch.clientY, vertical: null };
+  }, { passive: true });
+
+  pager.addEventListener('touchmove', (e) => {
+    if (!gesture || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - gesture.x;
+    const dy = touch.clientY - gesture.y;
+
+    if (gesture.vertical === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      gesture.vertical = dy > 0 && Math.abs(dy) > Math.abs(dx);
+    }
+    if (!gesture.vertical || dy <= 0 || gesture.page.scrollTop > 0) return;
+
+    e.preventDefault();
+    const distance = Math.min(100, dy * 0.5);
+    const pull = gesture.page.querySelector('.pull-refresh');
+    gesture.page.classList.add('pull-refresh-active');
+    pull.classList.add('pulling');
+    pull.style.transform = `translateY(${Math.min(0, distance - 48)}px)`;
+    gesture.page.querySelector('.page-inner').style.transform = `translateY(${distance}px)`;
+    pull.classList.toggle('ready', distance >= threshold);
+    pull.textContent = distance >= threshold ? '놓아서 새로고침' : '아래로 당겨 새로고침';
+  }, { passive: false });
+
+  const finish = async () => {
+    if (!gesture) return;
+    const { page, vertical } = gesture;
+    gesture = null;
+    const pull = page.querySelector('.pull-refresh');
+    if (!pull || !vertical) return;
+    const inner = page.querySelector('.page-inner');
+
+    const shouldRefresh = pull.classList.contains('ready');
+    page.classList.remove('pull-refresh-active');
+    pull.classList.remove('pulling');
+    if (!shouldRefresh) {
+      pull.style.transform = '';
+      inner.style.transform = '';
+      pull.classList.remove('ready');
+      return;
+    }
+
+    pull.style.transform = 'translateY(0)';
+    inner.style.transform = 'translateY(48px)';
+    pull.textContent = '업데이트 중…';
+    pull.classList.add('loading');
+    await refreshNews();
+    pull.style.transform = '';
+    inner.style.transform = '';
+    pull.classList.remove('ready', 'loading');
+  };
+
+  pager.addEventListener('touchend', finish);
+  pager.addEventListener('touchcancel', () => {
+    if (!gesture) return;
+    const pull = gesture.page.querySelector('.pull-refresh');
+    const inner = gesture.page.querySelector('.page-inner');
+    gesture.page.classList.remove('pull-refresh-active');
+    gesture = null;
+    if (!pull) return;
+    pull.style.transform = '';
+    if (inner) inner.style.transform = '';
+    pull.classList.remove('ready', 'pulling');
+  });
+}
+
 // ---------- boot ----------
 
 async function main() {
@@ -1214,6 +1297,7 @@ async function main() {
   showUpdatedAt();
   rebuildPages();
   restoreViewState();
+  setupPullToRefresh();
 
   const pager = document.getElementById('pager');
   let raf = 0;

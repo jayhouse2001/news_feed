@@ -75,3 +75,10 @@
   - Windows 자격증명에 `git:https://github.com` 항목은 존재하나 소유 계정 미확인. `git ls-remote https://github.com/jayhouse/news-feed.git` → "Repository not found" (인증 프롬프트는 없음).
   - `git credential fill` + GitHub API 로 계정·scope 확인 시도는 보안 분류기에 차단됨.
   - ⇒ 배포 재개에는 주인님의 GitHub 계정명 + (gh 설치 또는 토큰 사용) 승인 필요.
+
+## 2026-08-05 — 뉴스 화면 당겨서 새로고침
+
+- 각 뉴스 카테고리 화면이 맨 위일 때 아래로 당겼다 놓으면 `news.json`을 다시 불러오도록 구현.
+- 세로 당김이 확정된 경우에만 동작해 기존 좌우 페이지 스와이프와 충돌하지 않으며, 대시보드에는 적용하지 않음.
+- 당김 거리와 임계점(놓아서 새로고침), 업데이트 진행 상태를 화면에 표시.
+- iOS에서 당김 표시의 높이 변경이 `scrollTop`을 움직여 제스처가 끊길 수 있어, 레이아웃에 영향을 주지 않는 `absolute` + `transform` 방식으로 수정. 로컬 브라우저에서 18개 뉴스 화면의 표시 영역, 초기 스크롤 위치, 비레이아웃 배치를 확인.

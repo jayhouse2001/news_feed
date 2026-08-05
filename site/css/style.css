@@ -130,16 +130,48 @@ button:disabled { opacity: .35; cursor: default; }
 .page {
   flex: 0 0 100%;
   width: 100%;
+  position: relative;
   scroll-snap-align: start;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+.pull-refresh {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+  transform: translateY(-48px);
+  transition: transform .2s ease;
+}
+.pull-refresh.pulling { transition: none; }
+.pull-refresh::before {
+  content: '⇓';
+  margin-right: 6px;
+  color: var(--accent);
+  font-size: 17px;
+  transition: transform .2s ease;
+}
+.pull-refresh.ready::before { transform: rotate(180deg); }
+.pull-refresh.loading::before { animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .pull-refresh { transition: none; }
+  .pull-refresh.loading::before { animation: none; }
 }
 .page-inner {
   padding: 0 12px calc(20px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: transform .2s ease;
 }
+.page.pull-refresh-active .page-inner { transition: none; }
 
 .placeholder, .w-empty {
   color: var(--muted);
