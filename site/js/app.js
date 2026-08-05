@@ -458,26 +458,42 @@ function pmGrade(pm25) {
 
 let weatherCache = null;
 
+async function reverseGeocodeCurrent(lat, lon) {
+  const url = 'https://api.bigdatacloud.net/data/reverse-geocode-client' +
+    `?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&localityLanguage=ko`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Reverse geocoding HTTP ${res.status}`);
+  const data = await res.json();
+  const parts = [data.city, data.locality]
+    .filter((name, i, arr) => name && arr.indexOf(name) === i);
+  return parts.join(' ') || data.principalSubdivision || '현재 위치';
+}
+
 // Resolve coordinates: device location first, fall back to the saved place.
-function resolvePlace() {
+function resolvePlace({ fresh = false } = {}) {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
       resolve(S.place || { name: '서울', lat: 37.5665, lon: 126.978 });
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         const p = {
           name: '현재 위치',
           lat: Math.round(pos.coords.latitude * 1e4) / 1e4,
           lon: Math.round(pos.coords.longitude * 1e4) / 1e4,
         };
+        try {
+          p.name = await reverseGeocodeCurrent(p.lat, p.lon);
+        } catch {
+          // Coordinates are still usable when the place-name service is unavailable.
+        }
         S.place = p;
         save();
         resolve(p);
       },
       () => resolve(S.place || { name: '서울', lat: 37.5665, lon: 126.978 }),
-      { timeout: 8000, maximumAge: 600000 }
+      { timeout: 8000, maximumAge: fresh ? 0 : 600000 }
     );
   });
 }
@@ -525,12 +541,21 @@ async function fetchWeather(place) {
 
 function renderWeatherWidget(card) {
   const body = el('div', 'weather-body');
-  body.appendChild(el('p', 'w-empty', '위치 확인 중…'));
   card.appendChild(body);
 
   const nameSlot = card.querySelector('.w-place');
+  const locateBtn = card.querySelector('.w-locate');
 
-  resolvePlace()
+  const load = ({ fresh = false } = {}) => {
+    body.textContent = '';
+    body.appendChild(el('p', 'w-empty', fresh ? '현재 위치 갱신 중…' : '위치 확인 중…'));
+    if (locateBtn) {
+      locateBtn.disabled = true;
+      locateBtn.classList.add('spinning');
+    }
+
+    if (fresh) weatherCache = null;
+    return resolvePlace({ fresh })
     .then((place) => {
       if (nameSlot) nameSlot.textContent = place.name;
       return fetchWeather(place);
@@ -577,7 +602,18 @@ function renderWeatherWidget(card) {
     .catch(() => {
       body.textContent = '';
       body.appendChild(el('p', 'w-empty', '날씨를 불러오지 못했습니다.'));
+    })
+    .finally(() => {
+      if (locateBtn) {
+        locateBtn.disabled = false;
+        locateBtn.classList.remove('spinning');
+      }
     });
+
+  };
+
+  if (locateBtn) locateBtn.addEventListener('click', () => load({ fresh: true }));
+  load();
 }
 
 // ---------- dashboard widgets ----------
@@ -595,7 +631,13 @@ function widgetFrame(widget, index) {
 
   const btns = el('span', 'w-btns');
   if (widget.type === 'weather') {
-    btns.appendChild(el('span', 'w-place', '…'));
+    const locate = el('button', 'w-locate');
+    locate.type = 'button';
+    locate.setAttribute('aria-label', '현재 위치 새로고침');
+    locate.title = '현재 위치 새로고침';
+    locate.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" class="fill"/></svg>';
+    btns.appendChild(locate);
+    btns.appendChild(el('span', 'w-place', '현재 위치'));
   }
   if (widget.type === 'important') {
     const cfg = el('button', 'w-btn', '설정');
