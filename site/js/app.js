@@ -4,9 +4,18 @@
 
 const LS_KEY = 'nf:settings:v1';
 
+// Blocked out of the box at the owner's request. 동아사이언스 is deliberately
+// left out — its science coverage is wanted.
+const DEFAULT_BLOCKED = [
+  '조선일보', 'Chosunbiz', '조선비즈', '헬스조선', '스포츠조선', 'TV조선', '주간조선', '월간조선',
+  '중앙일보', '일간스포츠', 'JTBC', '중앙SUNDAY', '월간중앙',
+  '동아일보', '스포츠동아', '채널A', '신동아',
+  '국민일보', '더미션',
+];
+
 function defaultSettings() {
   return {
-    blockedSources: [],
+    blockedSources: [...DEFAULT_BLOCKED],
     blockedKeywords: [],
     preferredSources: [],
     categoryOrder: [],
@@ -19,14 +28,39 @@ function defaultSettings() {
     ],
     links: [],
     place: null,
+    openMode: 'same',
+    defaultBlocksApplied: true,
   };
+}
+
+// how tapping an article behaves
+const OPEN_MODES = {
+  same: { label: '현재 창에서 열기', hint: '뒤로 가기(왼쪽 끝에서 스와이프)로 목록으로 돌아옵니다.' },
+  newtab: { label: '새 창에서 열기', hint: '기사가 새 탭에서 열려 목록이 그대로 남습니다.' },
+  reader: { label: '앱 안에서 읽기', hint: '앱을 벗어나지 않고 "◀ 목록" 버튼으로 돌아옵니다.' },
+};
+
+function openMode() {
+  const m = S.openMode;
+  if (m && OPEN_MODES[m]) return m;
+  return 'same';
 }
 
 function loadSettings() {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return defaultSettings();
-    return Object.assign(defaultSettings(), JSON.parse(raw));
+    const stored = JSON.parse(raw);
+    const s = Object.assign(defaultSettings(), stored);
+    // apply the default block list once to devices saved before it existed
+    // (check the stored copy — the defaults always carry the flag)
+    if (!stored.defaultBlocksApplied) {
+      for (const src of DEFAULT_BLOCKED) {
+        if (!s.blockedSources.includes(src)) s.blockedSources.push(src);
+      }
+      s.defaultBlocksApplied = true;
+    }
+    return s;
   } catch {
     return defaultSettings();
   }
@@ -173,6 +207,78 @@ function openPanel(title, buildBody) {
   root.hidden = false;
 }
 
+// ---------- title translation (foreign feeds) ----------
+
+// Unofficial Google gtx endpoint: no key, CORS-enabled. Falls back to the
+// original title whenever it fails, so a blocked request is never fatal.
+const TR_KEY = 'nf:tr:v1';
+
+let trCache = {};
+try {
+  trCache = JSON.parse(localStorage.getItem(TR_KEY) || '{}');
+} catch {
+  trCache = {};
+}
+
+let trSaveTimer = 0;
+function saveTrCache() {
+  clearTimeout(trSaveTimer);
+  trSaveTimer = setTimeout(() => {
+    try {
+      const keys = Object.keys(trCache);
+      // keep the cache from growing without bound
+      if (keys.length > 600) {
+        const trimmed = {};
+        for (const k of keys.slice(-400)) trimmed[k] = trCache[k];
+        trCache = trimmed;
+      }
+      localStorage.setItem(TR_KEY, JSON.stringify(trCache));
+    } catch {
+      // storage full or unavailable; translations just won't persist
+    }
+  }, 800);
+}
+
+async function gtx(text) {
+  const url =
+    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=' +
+    encodeURIComponent(text);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  const t = j && j[0] ? j[0].map((s) => s[0]).join('') : '';
+  if (!t) throw new Error('empty');
+  return t;
+}
+
+// Translate the marked titles one at a time to avoid hammering the endpoint.
+let trRunning = false;
+async function translatePending(root) {
+  if (trRunning) return;
+  trRunning = true;
+  try {
+    const nodes = [...(root || document).querySelectorAll('[data-tr]')];
+    for (const node of nodes) {
+      const orig = node.getAttribute('data-tr');
+      node.removeAttribute('data-tr');
+      if (trCache[orig]) {
+        node.textContent = trCache[orig];
+        continue;
+      }
+      try {
+        const t = await gtx(orig);
+        trCache[orig] = t;
+        node.textContent = t;
+        saveTrCache();
+      } catch {
+        node.classList.add('untranslated');
+      }
+    }
+  } finally {
+    trRunning = false;
+  }
+}
+
 // ---------- news item ----------
 
 // Standalone (home-screen) mode keeps target=_blank inside the app shell,
@@ -191,17 +297,32 @@ function newsItemNode(item, opts) {
   const a = el('a', 'item-link', item.title);
   a.href = item.link;
   a.rel = 'noreferrer';
-  a.addEventListener('click', (e) => {
+  if (opts && opts.translate) {
+    // show the original immediately; translatePending() swaps it in when ready
+    a.setAttribute('data-tr', item.title);
+    a.title = item.title;
+  }
+
+  const mode = openMode();
+  if (mode === 'newtab') {
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
     if (isStandalone()) {
-      // iOS gives home-screen apps no back gesture, so keep the article inside
-      // the shell where a back button can dismiss it.
+      // standalone mode swallows target=_blank inside the app shell
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.location.href = `x-safari-${item.link}`;
+      });
+    }
+  } else if (mode === 'reader') {
+    a.addEventListener('click', (e) => {
       e.preventDefault();
       openReader(item);
-    } else {
-      // Safari: same tab, and the edge swipe goes back to this exact spot.
-      saveViewState();
-    }
-  });
+    });
+  } else {
+    // same tab: remember where we were so back lands on the same spot
+    a.addEventListener('click', () => saveViewState());
+  }
   top.appendChild(a);
 
   const more = el('button', 'more', '⋯');
@@ -516,7 +637,9 @@ function similar(a, b) {
 function importantItems(count) {
   const pool = [];
   for (const cat of enabledCategories()) {
-    for (const item of visibleItems(cat)) pool.push({ item, catName: cat.name });
+    for (const item of visibleItems(cat)) {
+      pool.push({ item, catName: cat.name, translate: !!cat.lang && cat.lang !== 'ko' });
+    }
   }
   pool.sort((a, b) => b.item.score - a.item.score);
   const picked = [];
@@ -532,8 +655,8 @@ function importantItems(count) {
 function renderImportantWidget(card, widget) {
   const count = widget.config?.count || 5;
   const ul = el('ul', 'news-list flat');
-  for (const { item, catName } of importantItems(count)) {
-    ul.appendChild(newsItemNode(item, { categoryName: catName }));
+  for (const { item, catName, translate } of importantItems(count)) {
+    ul.appendChild(newsItemNode(item, { categoryName: catName, translate }));
   }
   if (!ul.children.length) card.appendChild(el('p', 'w-empty', '표시할 뉴스가 없습니다.'));
   else card.appendChild(ul);
@@ -621,11 +744,12 @@ function buildCategoryPage(cat) {
   sortRow.appendChild(el('span', null, `${items.length}건`));
   inner.appendChild(sortRow);
 
+  const translate = cat.lang && cat.lang !== 'ko';
   if (!items.length) {
     inner.appendChild(el('p', 'placeholder', '표시할 기사가 없습니다.'));
   } else {
     const ul = el('ul', 'news-list');
-    for (const item of items) ul.appendChild(newsItemNode(item));
+    for (const item of items) ul.appendChild(newsItemNode(item, { translate }));
     inner.appendChild(ul);
   }
 
@@ -711,6 +835,7 @@ function rebuildPages() {
   const target = Math.min(keep, pages.length - 1);
   pager.scrollLeft = target * pager.clientWidth;
   syncPageIndicator();
+  translatePending(pager);
 }
 
 // ---------- settings panel ----------
@@ -759,6 +884,95 @@ function addRow(placeholder, onAdd, listId) {
   return row;
 }
 
+// Publisher families: one tap blocks a whole group, individual chips below
+// still toggle each outlet. Ownership only, no editorial judgement.
+const SOURCE_FAMILIES = [
+  { name: '조선', members: ['조선일보', 'Chosunbiz', '조선비즈', '헬스조선', '스포츠조선', 'TV조선', '주간조선', '월간조선'] },
+  { name: '중앙', members: ['중앙일보', '일간스포츠', 'JTBC', '중앙SUNDAY', '월간중앙'] },
+  { name: '동아', members: ['동아일보', '스포츠동아', '채널A', '신동아', '동아사이언스'] },
+  { name: '국민', members: ['국민일보', '더미션'] },
+  { name: '경향', members: ['경향신문', '스포츠경향'] },
+  { name: '한겨레', members: ['한겨레', '씨네21'] },
+  { name: '매경', members: ['매일경제', 'MBN', '매경이코노미'] },
+  { name: '한경', members: ['한국경제', '한경비즈니스', '한국경제TV'] },
+];
+
+function familyState(fam) {
+  const n = fam.members.filter((m) => S.blockedSources.includes(m)).length;
+  if (n === 0) return 'none';
+  return n === fam.members.length ? 'all' : 'some';
+}
+
+function familyRow() {
+  const box = el('div', 'src-grid');
+  for (const fam of SOURCE_FAMILIES) {
+    const state = familyState(fam);
+    const cls = state === 'all' ? ' blocked' : state === 'some' ? ' partial' : '';
+    const chip = el('button', 'fam-chip' + cls, `${fam.name} 계열`);
+    chip.title = fam.members.join(', ');
+    chip.addEventListener('click', () => {
+      // re-read the state: a chip rendered as 'some' may have changed since
+      if (familyState(fam) === 'all') {
+        S.blockedSources = S.blockedSources.filter((s) => !fam.members.includes(s));
+      } else {
+        for (const m of fam.members) addUnique(S.blockedSources, m);
+      }
+      save();
+      rebuildPages();
+      openSettings();
+    });
+    box.appendChild(chip);
+  }
+  return box;
+}
+
+// Sources that actually show up in the feed, most frequent first, so the
+// toggle grid reflects what is really there instead of a hardcoded guess.
+function frequentSources(limit) {
+  const count = new Map();
+  for (const cat of newsData.categories) {
+    for (const item of cat.items) {
+      if (!item.source) continue;
+      // skip aggregator/portal hostnames — they are not publishers
+      if (/\./.test(item.source)) continue;
+      count.set(item.source, (count.get(item.source) || 0) + 1);
+    }
+  }
+  const ranked = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s);
+  const extra = [];
+  // family members and anything already blocked stay listed even when this
+  // batch has no article from them, so they remain individually unblockable
+  for (const fam of SOURCE_FAMILIES) {
+    for (const m of fam.members) if (!ranked.includes(m)) extra.push(m);
+  }
+  for (const s of S.blockedSources) {
+    if (!ranked.includes(s) && !extra.includes(s)) extra.push(s);
+  }
+  return [...ranked.slice(0, limit), ...extra];
+}
+
+function sourceToggleGrid() {
+  const box = el('div', 'src-grid');
+  for (const src of frequentSources(40)) {
+    const blocked = S.blockedSources.includes(src);
+    const chip = el('button', 'src-chip' + (blocked ? ' blocked' : ''), src);
+    chip.setAttribute('aria-pressed', String(blocked));
+    chip.addEventListener('click', () => {
+      // read current state, not the value captured at render time
+      if (S.blockedSources.includes(src)) {
+        S.blockedSources = S.blockedSources.filter((s) => s !== src);
+      } else {
+        S.blockedSources.push(src);
+      }
+      save();
+      rebuildPages();
+      openSettings();
+    });
+    box.appendChild(chip);
+  }
+  return box;
+}
+
 function knownSourcesDatalist() {
   const dl = el('datalist');
   dl.id = 'known-sources';
@@ -779,6 +993,35 @@ function knownSourcesDatalist() {
 function openSettings() {
   openPanel('설정', (body) => {
     body.appendChild(knownSourcesDatalist());
+
+    // how articles open
+    const omSec = el('div', 'set-section');
+    omSec.appendChild(el('div', 'set-title', '기사 열기 방식'));
+    for (const [key, def] of Object.entries(OPEN_MODES)) {
+      const row = el('label', 'set-row set-choice');
+      const radio = el('input');
+      radio.type = 'radio';
+      radio.name = 'openmode';
+      radio.checked = openMode() === key;
+      radio.addEventListener('change', () => {
+        S.openMode = key;
+        save();
+        rebuildPages();
+        openSettings();
+      });
+      row.appendChild(radio);
+      const tx = el('span', 'choice-tx');
+      tx.appendChild(el('span', 'choice-label', def.label));
+      tx.appendChild(el('span', 'choice-hint', def.hint));
+      row.appendChild(tx);
+      omSec.appendChild(row);
+    }
+    if (isStandalone() && openMode() === 'same') {
+      omSec.appendChild(
+        el('p', 'w-empty', '홈 화면 앱에서는 뒤로 가기 제스처가 없습니다. "앱 안에서 읽기"를 권합니다.')
+      );
+    }
+    body.appendChild(omSec);
 
     // categories: on/off + order (also controls page order)
     const catSec = el('div', 'set-section');
@@ -812,11 +1055,15 @@ function openSettings() {
     body.appendChild(catSec);
 
     const bsSec = el('div', 'set-section');
-    bsSec.appendChild(el('div', 'set-title', '차단한 언론사'));
-    const bsBox = el('div', 'chipbox');
-    chipList(bsBox, S.blockedSources, '없음 — 기사의 ⋯ 버튼 또는 아래에서 추가');
-    bsSec.appendChild(bsBox);
-    bsSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.blockedSources, v), 'known-sources'));
+    bsSec.appendChild(el('div', 'set-title', '계열 묶어 차단 / 해제'));
+    bsSec.appendChild(familyRow());
+    bsSec.appendChild(el('div', 'set-title mt', '언론사별 (탭하면 취소선 = 차단)'));
+    bsSec.appendChild(sourceToggleGrid());
+    const blockedCount = S.blockedSources.length;
+    bsSec.appendChild(
+      el('p', 'w-empty', blockedCount ? `${blockedCount}곳 차단 중` : '차단한 언론사가 없습니다.')
+    );
+    bsSec.appendChild(addRow('목록에 없는 언론사 추가', (v) => addUnique(S.blockedSources, v), 'known-sources'));
     body.appendChild(bsSec);
 
     const bkSec = el('div', 'set-section');
@@ -958,6 +1205,7 @@ async function main() {
     newsData = { updatedAt: null, categories: [] };
   }
 
+  save(); // persist defaults (including the initial block list) on first run
   showUpdatedAt();
   rebuildPages();
   restoreViewState();

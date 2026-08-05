@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 const EDITION = 'hl=ko&gl=KR&ceid=KR:ko';
 const TOPIC = (t) => `https://news.google.com/rss/headlines/section/topic/${t}?${EDITION}`;
 
+const US_EDITION = 'hl=en-US&gl=US&ceid=US:en';
+const US_TOPIC = (t) => `https://news.google.com/rss/headlines/section/topic/${t}?${US_EDITION}`;
+
 const CATEGORIES = [
   { id: 'top', name: '주요', url: `https://news.google.com/rss?${EDITION}` },
   { id: 'politics', name: '정치', url: `https://news.google.com/rss/search?q=${encodeURIComponent('정치 when:1d')}&${EDITION}` },
@@ -20,6 +23,15 @@ const CATEGORIES = [
   { id: 'sports', name: '스포츠', url: TOPIC('SPORTS') },
   { id: 'entertainment', name: '연예', url: TOPIC('ENTERTAINMENT') },
   { id: 'health', name: '건강', url: TOPIC('HEALTH') },
+  // foreign feeds (US edition); titles get translated client-side
+  { id: 'intl', name: '해외', url: `https://news.google.com/rss?${US_EDITION}`, lang: 'en' },
+  { id: 'intl_world', name: '해외 세계', url: US_TOPIC('WORLD'), lang: 'en' },
+  { id: 'intl_business', name: '해외 경제', url: US_TOPIC('BUSINESS'), lang: 'en' },
+  { id: 'intl_tech', name: '해외 IT', url: US_TOPIC('TECHNOLOGY'), lang: 'en' },
+  { id: 'intl_science', name: '해외 과학', url: US_TOPIC('SCIENCE'), lang: 'en' },
+  { id: 'intl_health', name: '해외 건강', url: US_TOPIC('HEALTH'), lang: 'en' },
+  { id: 'intl_sports', name: '해외 스포츠', url: US_TOPIC('SPORTS'), lang: 'en' },
+  { id: 'intl_ent', name: '해외 연예', url: US_TOPIC('ENTERTAINMENT'), lang: 'en' },
 ];
 
 const MAX_ITEMS_PER_CATEGORY = 50;
@@ -134,10 +146,10 @@ async function fetchCategory(cat, now) {
     const xml = await res.text();
     const items = clusterAndScore(parseRss(xml), now);
     console.log(`[ok] ${cat.name}: ${items.length} items`);
-    return { id: cat.id, name: cat.name, items };
+    return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
   } catch (err) {
     console.error(`[fail] ${cat.name}: ${err.message}`);
-    return { id: cat.id, name: cat.name, items: [], error: err.message };
+    return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items: [], error: err.message };
   }
 }
 
