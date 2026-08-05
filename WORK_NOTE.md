@@ -33,6 +33,16 @@
 - 탭 상태를 `?tab=` / `#hash` 로 지정 가능 (헤드리스 캡처가 `#` 를 별도 타겟으로 오해해 쿼리 방식 추가).
 - **검증**: 로컬 서버 + Edge headless 390px 스크린샷 3장(대시보드/뉴스/설정) + DOM 진단 페이지. 진단 결과 `scrollWidth==clientWidth==390`(가로 오버플로 없음), 링크 4/4 렌더, ⋯ 38개·위젯 버튼 visible. **스크린샷에서 우측이 잘려 보이는 것은 Edge headless 캡처 특성이며 실제 레이아웃 문제 아님.**
 - 미리보기 아티팩트(M5 반영): https://claude.ai/code/artifact/8ec90382-e44c-4052-8db6-dc41b8fc7e10
+
+## 2026-08-05 — 배포 완료 + M6·M7
+
+- **배포**: GitHub `jayhouse2001/news_feed` (branch `master`). Pages Source = **GitHub Actions** 로 설정 → https://jayhouse2001.github.io/news_feed/ 로 서비스 중, iPhone 확인 완료.
+  - 브랜치명은 `main` → `master` 로 변경. 원격 `main` 삭제는 GitHub 기본 브랜치를 master 로 바꾼 뒤에야 가능(그 전엔 `refusing to delete the current branch` 로 거부됨).
+  - workflow trigger 도 `master` 로 수정 (안 고치면 push 해도 갱신 안 됨).
+  - ⚠️ `index.html` 은 `site/` 안에 그대로 둔다. Pages Source 가 GitHub Actions 이므로 `site/` 가 사이트 루트로 배포됨 — 루트로 옮길 필요 없음(옮기려다 원복함).
+- **M6 날씨·미세먼지 위젯**: Open-Meteo forecast + air-quality 를 브라우저에서 직접 호출(키 불필요·CORS 허용). 한 위젯에 기온·날씨·최고/최저 + PM2.5 등급 칩(좋음≤15/보통≤35/나쁨≤75/매우나쁨)·PM10·강수확률. 위젯 헤더 버튼으로 지역 선택(프리셋 7곳 + geolocation). 좌표 키 기준 캐시.
+- **M7 PWA**: manifest.json + icons(192/512, maskable 포함) + iOS 메타 태그. 아이콘은 SVG 를 Edge headless 로 PNG 렌더해 생성(SVG 원본은 삭제).
+- **검증**: 로컬 서버 + Edge headless. 날씨 위젯 실데이터 렌더 확인(31°, 맑음, PM2.5 17 "보통", 강수 82%), manifest·아이콘 3종 HTTP 200, iOS 메타 태그 4종 존재, 가로 오버플로 없음.
 - ⚠️ **미배포 — 막힌 지점**: 로컬 커밋 2개(1a4ad65, 9cf4e0d)만 존재.
   - `gh` CLI 미설치. `winget install GitHub.cli` 는 비대화형 세션에서 진행되지 않음(응답 없음, 미설치 확인).
   - Windows 자격증명에 `git:https://github.com` 항목은 존재하나 소유 계정 미확인. `git ls-remote https://github.com/jayhouse/news-feed.git` → "Repository not found" (인증 프롬프트는 없음).

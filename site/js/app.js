@@ -13,12 +13,24 @@ function defaultSettings() {
     categoryDisabled: [],
     sortBy: {},
     widgets: [
+      { id: 'w-weather', type: 'weather', config: {} },
       { id: 'w-important', type: 'important', config: { count: 5 } },
       { id: 'w-links', type: 'links', config: {} },
     ],
     links: [],
+    place: { name: '서울', lat: 37.5665, lon: 126.978 },
   };
 }
+
+const PLACES = [
+  { name: '서울', lat: 37.5665, lon: 126.978 },
+  { name: '판교', lat: 37.3947, lon: 127.1112 },
+  { name: '부산', lat: 35.1796, lon: 129.0756 },
+  { name: '대전', lat: 36.3504, lon: 127.3845 },
+  { name: '대구', lat: 35.8714, lon: 128.6014 },
+  { name: '광주', lat: 35.1595, lon: 126.8526 },
+  { name: '제주', lat: 33.4996, lon: 126.5312 },
+];
 
 function loadSettings() {
   try {
@@ -302,9 +314,134 @@ function setupSortButton() {
 // ---------- dashboard widgets ----------
 
 const WIDGET_TYPES = {
+  weather: { name: '날씨 · 미세먼지' },
   important: { name: '중요 뉴스' },
   links: { name: '바로가기' },
 };
+
+// ---------- weather / air quality ----------
+
+const WEATHER_CODES = {
+  0: '맑음', 1: '대체로 맑음', 2: '구름 조금', 3: '흐림',
+  45: '안개', 48: '착빙 안개',
+  51: '약한 이슬비', 53: '이슬비', 55: '강한 이슬비',
+  61: '약한 비', 63: '비', 65: '강한 비',
+  71: '약한 눈', 73: '눈', 75: '강한 눈', 77: '진눈깨비',
+  80: '소나기', 81: '소나기', 82: '강한 소나기',
+  95: '뇌우', 96: '뇌우·우박', 99: '뇌우·우박',
+};
+
+function pmGrade(pm25) {
+  if (pm25 == null) return null;
+  if (pm25 <= 15) return { label: '좋음', good: true };
+  if (pm25 <= 35) return { label: '보통', good: true };
+  if (pm25 <= 75) return { label: '나쁨', good: false };
+  return { label: '매우나쁨', good: false };
+}
+
+let weatherCache = null;
+
+async function fetchWeather(place) {
+  const key = `${place.lat},${place.lon}`;
+  if (weatherCache && weatherCache.key === key) return weatherCache.data;
+
+  const wx = `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}` +
+    '&current=temperature_2m,weather_code' +
+    '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+    '&timezone=Asia%2FSeoul&forecast_days=1';
+  const aq = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${place.lat}&longitude=${place.lon}` +
+    '&current=pm10,pm2_5&timezone=Asia%2FSeoul&forecast_days=1';
+
+  const [wxRes, aqRes] = await Promise.all([
+    fetch(wx).then((r) => r.json()),
+    fetch(aq).then((r) => r.json()).catch(() => null),
+  ]);
+
+  const data = {
+    temp: wxRes.current?.temperature_2m,
+    code: wxRes.current?.weather_code,
+    max: wxRes.daily?.temperature_2m_max?.[0],
+    min: wxRes.daily?.temperature_2m_min?.[0],
+    rain: wxRes.daily?.precipitation_probability_max?.[0],
+    pm10: aqRes?.current?.pm10,
+    pm25: aqRes?.current?.pm2_5,
+  };
+  weatherCache = { key, data };
+  return data;
+}
+
+function renderWeatherWidget(card, widget) {
+  const place = S.place || PLACES[0];
+  const head = card.querySelector('.w-head span');
+  const body = el('div', 'weather-body');
+  body.appendChild(el('p', 'w-empty', '불러오는 중…'));
+  card.appendChild(body);
+
+  fetchWeather(place)
+    .then((d) => {
+      body.textContent = '';
+      const row = el('div', 'weather-row');
+      row.appendChild(el('span', 'temp', d.temp != null ? `${Math.round(d.temp)}°` : '—'));
+      const cond = [
+        WEATHER_CODES[d.code] || '',
+        d.max != null && d.min != null ? `최고 ${Math.round(d.max)}° 최저 ${Math.round(d.min)}°` : '',
+      ].filter(Boolean).join(' · ');
+      row.appendChild(el('span', 'cond', cond));
+      body.appendChild(row);
+
+      const chips = el('div', 'chips');
+      const grade = pmGrade(d.pm25);
+      if (grade) {
+        chips.appendChild(
+          el('span', 'chip' + (grade.good ? ' good' : ' bad'),
+            `미세먼지 ${grade.label} · PM2.5 ${Math.round(d.pm25)}`)
+        );
+      }
+      if (d.pm10 != null) {
+        chips.appendChild(el('span', 'chip', `PM10 ${Math.round(d.pm10)}`));
+      }
+      if (d.rain != null) {
+        chips.appendChild(el('span', 'chip', `강수 ${d.rain}%`));
+      }
+      body.appendChild(chips);
+    })
+    .catch(() => {
+      body.textContent = '';
+      body.appendChild(el('p', 'w-empty', '날씨를 불러오지 못했습니다.'));
+    });
+}
+
+function configureWeather() {
+  const actions = PLACES.map((p) => ({
+    label: (S.place?.name === p.name ? '✓ ' : '') + p.name,
+    onClick() {
+      S.place = { ...p };
+      weatherCache = null;
+      save();
+      renderDashboard();
+    },
+  }));
+  actions.push({
+    label: '📍 현재 위치 사용',
+    onClick() {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          S.place = {
+            name: '현재 위치',
+            lat: Math.round(pos.coords.latitude * 1e4) / 1e4,
+            lon: Math.round(pos.coords.longitude * 1e4) / 1e4,
+          };
+          weatherCache = null;
+          save();
+          renderDashboard();
+        },
+        () => alert('위치를 가져오지 못했습니다.')
+      );
+    },
+  });
+  openSheet('지역', actions);
+}
 
 function widgetFrame(widget, index) {
   const card = el('div', 'widget');
@@ -312,6 +449,11 @@ function widgetFrame(widget, index) {
   head.appendChild(el('span', null, WIDGET_TYPES[widget.type]?.name || widget.type));
 
   const btns = el('span', 'w-btns');
+  if (widget.type === 'weather') {
+    const loc = el('button', 'w-btn', S.place?.name || '지역');
+    loc.addEventListener('click', configureWeather);
+    btns.appendChild(loc);
+  }
   if (widget.type === 'important') {
     const cfg = el('button', 'w-btn', '설정');
     cfg.addEventListener('click', () => configureImportant(widget));
@@ -411,7 +553,8 @@ function renderDashboard() {
   box.textContent = '';
   S.widgets.forEach((widget, i) => {
     const card = widgetFrame(widget, i);
-    if (widget.type === 'important') renderImportantWidget(card, widget);
+    if (widget.type === 'weather') renderWeatherWidget(card, widget);
+    else if (widget.type === 'important') renderImportantWidget(card, widget);
     else if (widget.type === 'links') renderLinksWidget(card);
     box.appendChild(card);
   });

@@ -30,11 +30,12 @@
   - [x] 위젯 공통 구조: `WIDGET_TYPES` 레지스트리 + `widgetFrame()`, ⋯ 메뉴로 위로/아래로/삭제, ＋위젯 추가
   - [x] 중요 뉴스 위젯: 활성 카테고리 교차 스코어 상위 N 건(3/5/10 선택), 카테고리 배지, 유사기사 중복 제거(0.6)
   - [x] 바로가기 링크 위젯: 링크 추가/삭제/편집/순서변경 패널, URL scheme 그대로 href
-- [ ] **M6 날씨·미세먼지 위젯**
-  - [ ] 날씨: Open-Meteo forecast (현재 + 주간, 기본 서울 + geolocation 옵션)
-  - [ ] 미세먼지: Open-Meteo air-quality (PM10/PM2.5 + 등급 표시, 날씨와 위치 설정 공유)
-- [ ] **M7 PWA**
-  - [ ] manifest.json, 아이콘, iOS 메타 태그
+- [x] **M6 날씨·미세먼지 위젯** (2026-08-05)
+  - [x] 날씨: Open-Meteo forecast (현재 기온·상태 + 당일 최고/최저·강수확률)
+  - [x] 미세먼지: Open-Meteo air-quality (PM2.5 등급 칩 + PM10), 날씨와 한 위젯에서 위치 공유
+  - [x] 지역 선택: 프리셋 7곳(서울/판교/부산/대전/대구/광주/제주) + 현재 위치(geolocation)
+- [x] **M7 PWA** (2026-08-05)
+  - [x] manifest.json (standalone, theme #2e5fcc), icons/icon-192·512.png, iOS 메타 태그 + apple-touch-icon
 - [ ] **M8 (선택) 확장 — 착수 전 주인님 확인**
   - [ ] 개별 언론사 RSS: Actions 러너에서 한겨레·매경·SBS 등 접근 검증 후 소스 추가
   - [ ] 외국 뉴스 번역: 수단 선택 대기 (Google 비공식 vs DeepL Free)
