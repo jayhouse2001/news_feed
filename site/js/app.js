@@ -853,8 +853,7 @@ function chipList(box, arr, emptyText) {
     x.setAttribute('aria-label', `${v} 삭제`);
     x.addEventListener('click', () => {
       arr.splice(i, 1);
-      save();
-      openSettings();
+      applySettingChange();
     });
     chip.appendChild(x);
     box.appendChild(chip);
@@ -872,8 +871,7 @@ function addRow(placeholder, onAdd, listId) {
     if (!v) return;
     onAdd(v);
     input.value = '';
-    save();
-    openSettings();
+    applySettingChange();
   };
   btn.addEventListener('click', commit);
   input.addEventListener('keydown', (e) => {
@@ -990,6 +988,14 @@ function knownSourcesDatalist() {
   return dl;
 }
 
+// Any settings change has to reach the pages behind the panel too, otherwise
+// the dashboard keeps showing blocked sources until the panel is dismissed.
+function applySettingChange() {
+  save();
+  rebuildPages();
+  openSettings();
+}
+
 function openSettings() {
   openPanel('설정', (body) => {
     body.appendChild(knownSourcesDatalist());
@@ -1035,8 +1041,7 @@ function openSettings() {
       cb.addEventListener('change', () => {
         if (cb.checked) S.categoryDisabled = S.categoryDisabled.filter((id) => id !== cat.id);
         else addUnique(S.categoryDisabled, cat.id);
-        save();
-        openSettings();
+        applySettingChange();
       });
       label.appendChild(cb);
       label.appendChild(el('span', null, cat.name));
@@ -1048,8 +1053,8 @@ function openSettings() {
         row.appendChild(b);
       };
       const order = all.map((c) => c.id);
-      mk('△', () => { moveItem(order, i, i - 1); S.categoryOrder = order; save(); openSettings(); }, i === 0);
-      mk('▽', () => { moveItem(order, i, i + 1); S.categoryOrder = order; save(); openSettings(); }, i === all.length - 1);
+      mk('△', () => { moveItem(order, i, i - 1); S.categoryOrder = order; applySettingChange(); }, i === 0);
+      mk('▽', () => { moveItem(order, i, i + 1); S.categoryOrder = order; applySettingChange(); }, i === all.length - 1);
       catSec.appendChild(row);
     });
     body.appendChild(catSec);
@@ -1084,9 +1089,9 @@ function openSettings() {
         b.addEventListener('click', fn);
         row.appendChild(b);
       };
-      mk('△', () => { moveItem(S.preferredSources, i, i - 1); save(); openSettings(); });
-      mk('▽', () => { moveItem(S.preferredSources, i, i + 1); save(); openSettings(); });
-      mk('✕', () => { S.preferredSources.splice(i, 1); save(); openSettings(); });
+      mk('△', () => { moveItem(S.preferredSources, i, i - 1); applySettingChange(); });
+      mk('▽', () => { moveItem(S.preferredSources, i, i + 1); applySettingChange(); });
+      mk('✕', () => { S.preferredSources.splice(i, 1); applySettingChange(); });
       psSec.appendChild(row);
     });
     if (!S.preferredSources.length) psSec.appendChild(el('p', 'w-empty', '없음'));
