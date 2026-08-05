@@ -9,31 +9,38 @@
 </head>
 <body>
   <header class="appbar">
-    <h1 id="appbar-title">뉴스</h1>
+    <h1 id="appbar-title">대시보드</h1>
     <span id="updated-at" class="updated"></span>
   </header>
 
   <main>
-    <section id="view-dashboard" class="view" hidden>
-      <p class="placeholder">대시보드 위젯은 준비 중입니다. (M5)</p>
+    <section id="view-dashboard" class="view">
+      <div id="widgets"></div>
+      <button id="add-widget" class="add-dashed">＋ 위젯 추가</button>
     </section>
 
-    <section id="view-news" class="view">
+    <section id="view-news" class="view" hidden>
       <nav id="cats" class="cats" aria-label="카테고리"></nav>
+      <div class="sortrow">
+        <button id="sort-btn" class="sort-btn">정렬: 최신순 ▾</button>
+        <span id="cat-count"></span>
+      </div>
       <ul id="news-list" class="news-list"></ul>
-      <p id="news-empty" class="placeholder" hidden>기사를 불러오지 못했습니다.</p>
+      <p id="news-empty" class="placeholder" hidden>표시할 기사가 없습니다.</p>
     </section>
 
     <section id="view-settings" class="view" hidden>
-      <p class="placeholder">설정은 준비 중입니다. (M3~M4)</p>
+      <div id="settings-body"></div>
     </section>
   </main>
 
   <nav class="tabbar" aria-label="주 메뉴">
-    <button class="tab" data-view="dashboard" data-title="대시보드">▦<span>대시보드</span></button>
-    <button class="tab on" data-view="news" data-title="뉴스">📰<span>뉴스</span></button>
+    <button class="tab on" data-view="dashboard" data-title="대시보드">▦<span>대시보드</span></button>
+    <button class="tab" data-view="news" data-title="뉴스">📰<span>뉴스</span></button>
     <button class="tab" data-view="settings" data-title="설정">⚙<span>설정</span></button>
   </nav>
+
+  <div id="overlay-root" hidden></div>
 
   <script src="js/app.js"></script>
 </body>
