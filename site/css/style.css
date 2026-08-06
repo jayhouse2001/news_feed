@@ -669,16 +669,21 @@ button:disabled { opacity: .35; cursor: default; }
 .x-chip .x { border: 0; background: none; color: inherit; font-size: 11px; padding: 0 2px; }
 
 .add-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* iOS Safari zooms the page in when a focused field is under 16px and never
+   zooms back out, so every text control stays at 16px on touch screens. */
 .in {
   flex: 1;
   min-width: 130px;
   font: inherit;
-  font-size: 13px;
+  font-size: 16px;
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--bg);
   color: var(--ink);
+}
+@media (pointer: fine) {
+  .in { font-size: 13px; }
 }
 textarea.in { width: 100%; resize: vertical; line-height: 1.45; }
 .primary {

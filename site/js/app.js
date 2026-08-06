@@ -191,8 +191,17 @@ function openSheet(title, actions) {
 
 function openPanel(title, buildBody) {
   const root = overlayRoot();
+  // Toggling a setting reopens the panel to redraw it. Rebuilding from
+  // scratch would jump back to the top, so carry the scroll position over
+  // when the same panel is being redrawn.
+  const prev = root.querySelector('.panel');
+  const keepScroll = prev && prev.dataset.title === title
+    ? prev.querySelector('.panel-body').scrollTop
+    : 0;
+
   root.textContent = '';
   const panel = el('div', 'panel');
+  panel.dataset.title = title;
   const head = el('div', 'panel-head');
   head.appendChild(el('b', null, title));
   const done = el('button', 'panel-done', '완료');
@@ -207,6 +216,7 @@ function openPanel(title, buildBody) {
   buildBody(body);
   root.appendChild(panel);
   root.hidden = false;
+  if (keepScroll) body.scrollTop = keepScroll;
 }
 
 // ---------- title translation (foreign feeds) ----------
