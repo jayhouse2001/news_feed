@@ -1810,14 +1810,18 @@ function aiPrompt(tracker) {
     '  같은 사건을 다룬 기사를 찾아 그 링크를 써라.',
     '- 링크를 도저히 못 찾은 사건은 아예 제외해라 (빈 칸으로 남기지 마라).',
     '',
-    '■ 출력 형식',
-    '설명·머리말·맺음말·번호 없이 아래 형식의 목록만 출력해라.',
+    '■ 출력 형식 (반드시 지킬 것)',
+    '아래 네 칸을 " | " 로 구분한 줄만 나열해라.',
     '',
     '날짜 | 제목 | 언론사 | 링크',
     '',
     '예시:',
     '2025-06-13 | 이스라엘, 이란 핵시설 선제공습 | Al Jazeera | https://www.aljazeera.com/news/2025/6/13/...',
     '2025-06-22 | 미국, 포르도 핵시설 직접 공습 | Reuters | https://www.reuters.com/world/...',
+    '',
+    '- 날짜는 YYYY-MM-DD, 오래된 것부터 순서대로.',
+    '- 인사말·머리말·맺음말·번호·표·굵은글씨를 붙이지 마라.',
+    '- 그대로 복사해서 붙여넣을 수 있게, 목록 외에는 아무것도 쓰지 마라.',
   ].filter((l) => l !== '').join('\n');
 }
 
@@ -1909,6 +1913,19 @@ async function copyText(text) {
   }
 }
 
+// Reading the clipboard needs permission and a secure context; Safari also
+// refuses outside a user gesture. Returns null so the caller can fall back to
+// telling the user to paste by hand.
+async function readClipboard() {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText) return null;
+    const text = await navigator.clipboard.readText();
+    return typeof text === 'string' && text.trim() ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 function openAiImport(tracker) {
   openPanel('AI로 타임라인 채우기', (body) => {
     const step1 = el('div', 'set-section');
@@ -1951,6 +1968,27 @@ function openAiImport(tracker) {
     inBox.rows = 8;
     inBox.placeholder = '2025-06-13 | 이스라엘, 이란 핵시설 선제공습 | 연합뉴스 | https://...';
     step2.appendChild(inBox);
+
+    const inRow = el('div', 'add-form');
+    const pasteBtn = el('button', 'primary', '붙여넣기');
+    pasteBtn.addEventListener('click', async () => {
+      const text = await readClipboard();
+      if (text == null) {
+        pasteBtn.textContent = '길게 눌러 붙여넣기';
+        inBox.focus();
+        setTimeout(() => { pasteBtn.textContent = '붙여넣기'; }, 2500);
+        return;
+      }
+      inBox.value = text;
+      redraw();
+    });
+    inRow.appendChild(pasteBtn);
+    const clearBtn = el('button', 'w-btn', '지우기');
+    clearBtn.style.padding = '7px 12px';
+    clearBtn.addEventListener('click', () => { inBox.value = ''; redraw(); });
+    inRow.appendChild(clearBtn);
+    step2.appendChild(inRow);
+
     const info = el('p', 'choice-hint', '표·목록·JSON 등 웬만한 형식은 그대로 알아봅니다.');
     step2.appendChild(info);
     body.appendChild(step2);
@@ -1968,6 +2006,9 @@ function openAiImport(tracker) {
         info.textContent = inBox.value.trim()
           ? '인식된 항목이 없습니다. 날짜로 시작하는 줄이 필요합니다.'
           : '표·목록·JSON 등 웬만한 형식은 그대로 알아봅니다.';
+        // the button must not keep a stale count from the previous paste
+        addBtn.disabled = true;
+        addBtn.textContent = '＋ 타임라인에 추가';
         return;
       }
       preview.hidden = false;
