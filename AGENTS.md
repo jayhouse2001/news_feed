@@ -14,6 +14,8 @@
 - **소급은 브라우저에서 직접 호출한다.** 트래커가 localStorage 에 있어 Actions 는 이슈 목록을 볼 수 없다. GDELT 는 rate limit 이 심하니 요청 간격 5.5초를 줄이지 말 것.
 - **`aiPrompt()` 문구를 임의로 줄이지 말 것.** 실패한 실제 세션을 근거로 세 가지(웹검색 강제 / 해외매체 대체 허용 / 링크 없는 항목 제외)를 명시한 것이다. 주석에 이유가 적혀 있다.
 - **데모용 페이지(`_demo.html` 류)를 site/ 에 남기지 말 것.** localStorage 를 덮어쓰는 시드 페이지를 만들어 두면 주인님이 입력한 데이터가 날아간다 (2026-08-06 실제 사고).
+- **입력 요소(`input`/`textarea`)를 16px 미만으로 만들지 말 것.** iOS Safari 가 포커스 시 페이지를 확대하고 되돌리지 않는다. 작게 보이고 싶으면 `@media (pointer: fine)` 안에서만 줄일 것. `maximum-scale=1` 로 막는 것은 금지(손가락 확대까지 막힘).
+- **`openPanel()` 은 같은 패널을 다시 그릴 때 스크롤을 이어받는다** (`panel.dataset.title` 기준). 설정 토글마다 맨 위로 튕기던 버그를 막는 장치이니 제거하지 말 것.
 - **설정을 바꾸는 핸들러는 `applySettingChange()` 를 쓴다.** `save()` + `openSettings()` 만 하면 패널 뒤의 대시보드·페이지가 갱신되지 않는다 (2026-08-05 실제 버그).
 - 기본 차단 목록(`DEFAULT_BLOCKED`)은 주인님이 지정한 것. 임의로 언론사를 추가·제거하지 말 것.
 
@@ -75,7 +77,7 @@
 ## 확인된 사실 (재검증 불필요)
 
 - Google 뉴스 RSS: `https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko` (전체), 카테고리는 `https://news.google.com/rss/headlines/section/topic/<TOPIC>?hl=ko&gl=KR&ceid=KR:ko` (TOPIC: WORLD/NATION/BUSINESS/TECHNOLOGY/SCIENCE/ENTERTAINMENT/SPORTS/HEALTH). 항목에 `<source>` 태그로 언론사명+도메인 포함.
-- TECHNOLOGY 와 SCIENCE 는 별개 피드이고 내용도 실제로 다름 (IT=기업·반도체·가상자산, 과학=우주·생명과학·연구). 정치는 topic 피드가 없어 검색 RSS(`정치 when:1d`) 사용.
+- TECHNOLOGY 와 SCIENCE 는 별개 피드이고 내용도 실제로 다름 (IT=기업·부품·가상자산, 과학=우주·생명과학·연구). 정치는 topic 피드가 없어 검색 RSS(`정치 when:1d`) 사용.
 - Open-Meteo 날씨: 키 불필요·CORS 허용. 예) `https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.978&current=temperature_2m,weather_code,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia/Seoul`
 - Open-Meteo 미세먼지: 키 불필요. 예) `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=37.5665&longitude=126.978&current=pm10,pm2_5&timezone=Asia/Seoul`
 - Frankfurter 환율: 키 불필요. 예) `https://api.frankfurter.dev/v1/latest?from=USD&to=KRW,JPY,EUR` (구 도메인 frankfurter.app 는 301 리다이렉트 — .dev 사용)
