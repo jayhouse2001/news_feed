@@ -757,6 +757,10 @@ textarea.in { width: 100%; resize: vertical; line-height: 1.45; }
 }
 .s-item:last-child { border-bottom: 0; }
 .s-cancel { color: var(--muted); }
+.s-item.danger { color: var(--warn); }
+
+/* a confirmation raised from inside a panel has to sit above it */
+.sheet-backdrop.stacked { z-index: 80; }
 
 /* in-app article viewer (standalone mode only) */
 .reader {

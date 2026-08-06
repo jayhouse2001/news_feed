@@ -164,6 +164,34 @@ function closeOverlay() {
   root.textContent = '';
 }
 
+// A sheet layered on top of an open panel. openSheet() empties the overlay
+// root, which would tear the panel down and leave nothing to return to, so a
+// confirmation raised from inside a panel gets its own node above it.
+function confirmSheet(title, confirmLabel, onConfirm) {
+  const root = overlayRoot();
+  const back = el('div', 'sheet-backdrop stacked');
+  const sheet = el('div', 'sheet');
+  if (title) sheet.appendChild(el('div', 's-title', title));
+
+  const yes = el('button', 's-item danger', confirmLabel);
+  yes.addEventListener('click', () => {
+    back.remove();
+    onConfirm();
+  });
+  sheet.appendChild(yes);
+
+  const no = el('button', 's-item s-cancel', '취소');
+  no.addEventListener('click', () => back.remove());
+  sheet.appendChild(no);
+
+  back.addEventListener('click', (e) => {
+    if (e.target === back) back.remove();
+  });
+  back.appendChild(sheet);
+  root.appendChild(back);
+  root.hidden = false;
+}
+
 function openSheet(title, actions) {
   const root = overlayRoot();
   root.textContent = '';
@@ -1764,8 +1792,14 @@ function openTrackerTimeline(tracker) {
         const x = el('button', 'tl-x', '✕');
         x.setAttribute('aria-label', '타임라인에서 삭제');
         x.addEventListener('click', () => {
-          removeEvent(tracker, ev);
-          openTrackerTimeline(tracker);
+          // ✕ sits right next to the article link, so a mistap must not
+          // silently drop an entry — a removed article never comes back
+          // on its own either, since its url goes on the dropped list.
+          const label = ev.title.length > 34 ? `${ev.title.slice(0, 34)}…` : ev.title;
+          confirmSheet(`${ev.date} · ${label}`, '✕ 타임라인에서 삭제', () => {
+            removeEvent(tracker, ev);
+            openTrackerTimeline(tracker);
+          });
         });
         li.appendChild(x);
         ul.appendChild(li);
@@ -2149,8 +2183,10 @@ function openNoteEditor(tracker, note) {
     if (note) {
       const del = el('button', 'add-dashed', '✕ 이 항목 삭제');
       del.addEventListener('click', () => {
-        removeEvent(tracker, note);
-        openTrackerTimeline(tracker);
+        confirmSheet('이 항목을 삭제할까요?', '✕ 삭제', () => {
+          removeEvent(tracker, note);
+          openTrackerTimeline(tracker);
+        });
       });
       body.appendChild(del);
     }
