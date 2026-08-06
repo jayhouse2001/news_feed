@@ -8,7 +8,12 @@
 - 각 마일스톤 완료 시 WORK_NOTE.md 에 날짜·내용 기록.
 - 기사 본문은 저장하지 않는다 (제목·요약·링크만).
 - 프론트는 빌드 스텝 없는 순수 HTML/CSS/JS 유지 — 프레임워크 도입은 별도 승인 필요.
-- UI 는 [PLAN.md](PLAN.md) 의 "UI 구성" 절을 따른다 (좌우 스와이프 페이저, 헤더 ⚙, 위젯 대시보드). 구조 변경은 주인님 승인 필요.
+- UI 는 [PLAN.md](PLAN.md) 의 "UI 구성" 절을 따른다 (하단 탭바 4개, 좌우 스와이프 페이저, 헤더 ⚙, 위젯 대시보드). 구조 변경은 주인님 승인 필요.
+- **하단 탭바 = 섹션 전환, `pagedots` = 뉴스 탭 안의 카테고리.** 스와이프는 뉴스 탭 안에서만 동작한다. 새 섹션은 `TABS` + `tabPages()` 에 추가.
+- **트래커 자동 수집에 AI 를 붙이지 않는다.** 제목 부분일치(AND/OR 키워드) + Google 뉴스/GDELT 검색으로만 수집한다. 앱이 외부 AI API 를 호출하는 구조는 별도 승인 필요 — 현재 AI 연동은 **사용자가 직접 복사·붙여넣기** 하는 방식뿐이다.
+- **소급은 브라우저에서 직접 호출한다.** 트래커가 localStorage 에 있어 Actions 는 이슈 목록을 볼 수 없다. GDELT 는 rate limit 이 심하니 요청 간격 5.5초를 줄이지 말 것.
+- **`aiPrompt()` 문구를 임의로 줄이지 말 것.** 실패한 실제 세션을 근거로 세 가지(웹검색 강제 / 해외매체 대체 허용 / 링크 없는 항목 제외)를 명시한 것이다. 주석에 이유가 적혀 있다.
+- **데모용 페이지(`_demo.html` 류)를 site/ 에 남기지 말 것.** localStorage 를 덮어쓰는 시드 페이지를 만들어 두면 주인님이 입력한 데이터가 날아간다 (2026-08-06 실제 사고).
 - **설정을 바꾸는 핸들러는 `applySettingChange()` 를 쓴다.** `save()` + `openSettings()` 만 하면 패널 뒤의 대시보드·페이지가 갱신되지 않는다 (2026-08-05 실제 버그).
 - 기본 차단 목록(`DEFAULT_BLOCKED`)은 주인님이 지정한 것. 임의로 언론사를 추가·제거하지 말 것.
 
@@ -43,7 +48,26 @@
   - [x] 해외 뉴스 8개 카테고리(US edition) + **제목 한국어 번역** (gtx, 키 불필요, localStorage 캐시, 실패 시 원문 + EN 배지)
   - [x] 언론사 차단 UI: 점선 칩 + 탭하면 취소선, 계열 묶음 차단/해제, 기본 차단 19곳(주인님 지정)
   - [x] 기사 열기 방식 선택: 현재 창 / 새 창 / 앱 안에서 읽기
+- [x] **M9 하단 탭바 + 이슈 트래커 + 스크랩** (2026-08-06)
+  - [x] 하단 탭바 4개(대시보드·뉴스·트래커·스크랩), ⚙ 는 상단 유지. `pagedots` 는 뉴스 탭에서만 표시
+  - [x] 탭별 카테고리 위치 기억(`tabIndex`), `VIEW_KEY` 를 `{tab,index,scroll}` 로 확장 — 기사 열고 뒤로 와도 같은 탭 복귀
+  - [x] 트래커: AND/OR 키워드 규칙 → 피드에서 자동 수집, 날짜별 타임라인 패널, 진행중/종료 세그먼트
+  - [x] 기사 ⋯ 에서 "이슈에 추가"(수동 편입) / "스크랩에 저장"
+  - [x] 트래커 위젯(대시보드), 탭 배지 = 마지막 열람 이후 새로 모인 건수
+- [x] **M10 타임라인 개선 + 직접 기록 + GDELT 과거 소급** (2026-08-06)
+  - [x] 타임라인을 날짜별 카드로, 세로 레일 진하게, 요일 표시, 5곳 이상 보도한 날 주황 강조
+  - [x] 직접 기록(뉴스 링크 없는 사건) 추가/편집/삭제, 항목별 ✕ 삭제 (`dropped` 로 재수집 차단)
+  - [x] GDELT 소급: 영어 키워드 + 시작일(기본 6개월) 입력 → 브라우저에서 직접 호출, 응답이 250건이면 창을 반씩 쪼개 재요청
+  - [x] 소급 결과 축소: 주요 매체 화이트리스트 23곳(`MAJOR_DOMAINS`) + 하루 상한(3/5/8/15, 기본 8) + 제목 유사도 중복제거 → 248건 → 24건. 상한에 걸린 URL 은 `skippedUrls` 에 남겨 재실행 시 재추가 방지(상한을 올리면 초기화)
+- [x] **M11 수동·AI 편집** (2026-08-06)
+  - [x] Google 뉴스 검색 RSS 를 소급 1순위로 (한국어 검색 O, 연합·YTN 잡힘) → CORS 중계 4곳 동시 시도(`Promise.any`), 전부 실패 시 GDELT 로 대체
+  - [x] 소급 패널에 시작일 직접 입력 + 빠른 선택(6개월/1년/2년/3년) — 이슈 편집에만 있어서 못 바꾸던 문제
+  - [x] 증분 소급: `backfilledFrom`/`backfilledTo` 로 이미 가져온 범위 기억, 새로 열린 구간만 요청. `pendingSpans` 로 실패 구간 이어받기
+  - [x] AI 타임라인 붙여넣기: `aiPrompt()` 복사 → AI 답변 붙여넣기 → `parseAiTimeline()` 파싱 → 미리보기 → 추가
+  - [x] 모든 항목 추가/편집(✎)/삭제(✕). 링크 있는 기사도 편집 가능, 언론사 필드 추가
+  - [x] 키워드 없는 이슈 허용 (AI·수동 전용). 카드에 "자동 수집 없음 · 직접 관리" 표시
 - [ ] **남은 후보 (착수 전 주인님 확인)**
+  - [ ] 소급 시작일 자동 탐지: `mode=timelinevol` 로 보도량 급증 지점을 찾아 시작일 제안 (현재는 사용자가 지정)
   - [ ] reader 모드 개선: Google 링크는 iframe 시도 없이 바로 Safari 로 (Google 이 프레임 삽입 거부 — 실측 확인됨)
   - [ ] 개별 언론사 RSS 소스 추가 (Actions 러너에서 접근 검증 필요)
   - [ ] 추가 위젯: 환율(Frankfurter ✅검증) / 관심 키워드 뉴스 / 나중에 읽기
@@ -55,6 +79,17 @@
 - Open-Meteo 날씨: 키 불필요·CORS 허용. 예) `https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.978&current=temperature_2m,weather_code,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia/Seoul`
 - Open-Meteo 미세먼지: 키 불필요. 예) `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=37.5665&longitude=126.978&current=pm10,pm2_5&timezone=Asia/Seoul`
 - Frankfurter 환율: 키 불필요. 예) `https://api.frankfurter.dev/v1/latest?from=USD&to=KRW,JPY,EUR` (구 도메인 frankfurter.app 는 301 리다이렉트 — .dev 사용)
+- **GDELT 2.0 Doc API** (`https://api.gdeltproject.org/api/v2/doc/doc`) — 키 불필요, **CORS 허용**(`Access-Control-Allow-Origin: *`), 브라우저 직접 호출 가능. 2026-08-06 실측:
+  - **한국어 키워드 검색은 안 됨** (`대통령`, `이스라엘` → `{}` 0건). 2글자 이하는 "keyword too short" 거부. 한국어 토크나이징 미지원.
+  - **영어 키워드 + `sourcecountry:southkorea sourcelang:korean` 조합이 정답** — 한국어 기사가 정상적으로 나옴. 예: `(iran OR iranian) sourcecountry:southkorea sourcelang:korean` → 2025-06 이란 충돌 기사 250건 전부 한국어 제목.
+  - `maxrecords` **상한 250**. 2주 창도 큰 이슈면 꽉 참 → 응답이 250이면 창을 반으로 쪼개 재요청해야 유실이 없다(6개월 실측: 단순 월 단위 860건 vs 적응 분할 1436건).
+  - `seendate` 형식은 `20260805T143000Z`. 응답이 JSON 이 아니면 에러 메시지(평문)다 — `{` 로 시작하는지 먼저 확인할 것.
+  - **rate limit 이 매우 엄격**(5초당 1회 공지, 실제로는 누적되면 수 분간 429). 개발 중 연속 테스트하면 IP 가 막히니 주의. **빌드서버(B100039) IP 는 상시 429 — Windows 에서 테스트할 것.**
+  - 본문 전체 매칭이라 무관한 기사가 섞임 → 가져온 뒤 한국어 키워드로 제목 재필터 필요.
+  - **양이 과하다.** 실측(2025-06 이란 이슈 5일치): 250건 / 27개 도메인, 하루 최대 139건. 상위 5곳(파이낸셜뉴스·머니투데이·헤럴드경제·이데일리·뉴스핌)이 절반 이상을 차지하는 반면 **연합·YTN·SBS·MBC 는 거의 안 잡힌다.** → 주요 매체 화이트리스트 + 하루 상한이 필수 (248건 → 24건).
+  - 제목 유사도 중복제거만으로는 거의 안 줄어든다(95 → 88). 매체가 달라 제목 표현이 제각각이라 유사도 0.6 에 안 걸림. **하루 상한이 실질적인 수단.**
+- **Google 뉴스 검색 RSS 는 `after:`/`before:` 를 지원한다** — `https://news.google.com/rss/search?q=<키워드>+after:2025-06-10+before:2025-06-20&hl=ko&gl=KR&ceid=KR:ko`. 한국어 검색이 되고 연합뉴스·연합뉴스TV·BBC 등이 잡혀 GDELT 보다 품질이 낫다. 한 요청당 최대 100건. **단 CORS 헤더가 없어 브라우저에서 직접 못 읽는다.**
+- **무료 CORS 중계는 신뢰할 수 없다** (2026-08-06 실측). 같은 시각에 allorigins/raw 는 실패하고 /get 은 성공, 몇 분 뒤엔 반대. 3회 반복 시 2회 실패. codetabs 521, corsproxy.io 403/503. → 여러 곳을 `Promise.any` 로 동시 시도하고, 전부 실패하면 GDELT 로 대체하는 구조가 필수. **소스(Google 뉴스) 자체는 서버에서 부르면 항상 200 이다** — 실패하면 중계를 의심할 것.
 - 개별 언론사 사이트는 Claude 의 WebFetch 로는 차단됨 — 검증은 Actions 러너(또는 curl)에서 할 것.
 - 번역: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=...` — 키 불필요·CORS 허용. 비공식이라 막힐 수 있으니 실패 시 원문 유지가 필수. 작업 허브 `Z:\work1\work_note\widget_news.js` 가 같은 방식.
 - **Google 뉴스 링크는 iframe 삽입 거부** ("news.google.com 연결을 거부했습니다") → 앱 내 reader 모드에서 대부분 안 열림. Safari 폴백 필수.
