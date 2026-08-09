@@ -97,7 +97,67 @@ const IMAGE_FEEDS = [
 
 const IMAGE_MATCH_THRESHOLD = 0.55;
 
-const MAX_ITEMS_PER_CATEGORY = 50;
+// Publisher feeds are also read as article sources, not just as a picture
+// bank: they carry a thumbnail on nearly every item and link straight to the
+// publisher instead of through Google's redirect. Google's aggregate is kept
+// on top of them for the breadth it brings — roughly three hundred outlets
+// against the two dozen that publish a usable feed.
+const PUBLISHER_SOURCES = [
+  { cat: 'top', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/news.xml' },
+  { cat: 'top', name: 'SBS', url: 'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER' },
+  { cat: 'top', name: '동아일보', url: 'https://rss.donga.com/total.xml' },
+  { cat: 'politics', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/politics.xml' },
+  { cat: 'politics', name: 'SBS', url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER' },
+  { cat: 'business', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/economy.xml' },
+  { cat: 'business', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/industry.xml' },
+  { cat: 'business', name: 'SBS', url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02&plink=RSSREADER' },
+  { cat: 'business', name: '아시아경제', url: 'https://www.asiae.co.kr/rss/all.htm' },
+  { cat: 'business', name: '매일경제', url: 'https://www.mk.co.kr/rss/30000001/' },
+  { cat: 'nation', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/society.xml' },
+  { cat: 'nation', name: 'SBS', url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=03&plink=RSSREADER' },
+  { cat: 'world', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/international.xml' },
+  { cat: 'world', name: 'SBS', url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=08&plink=RSSREADER' },
+  { cat: 'sports', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/sports.xml' },
+  { cat: 'entertainment', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/culture.xml' },
+  { cat: 'health', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/health.xml' },
+  { cat: 'health', name: '뉴시스', url: 'https://newsis.com/RSS/health.xml' },
+  { cat: 'tech', name: '매일경제', url: 'https://www.mk.co.kr/rss/50100032/' },
+  // No Korean science outlet publishes an image in its feed, so 과학 keeps
+  // running on the aggregate alone.
+  // foreign categories; titles are translated client-side
+  { cat: 'intl', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/rss.xml' },
+  { cat: 'intl', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
+  { cat: 'intl', name: 'NBC News', url: 'https://feeds.nbcnews.com/nbcnews/public/news' },
+  { cat: 'intl_world', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
+  { cat: 'intl_world', name: 'The Guardian', url: 'https://www.theguardian.com/world/rss' },
+  { cat: 'intl_world', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
+  { cat: 'intl_world', name: 'NPR', url: 'https://feeds.npr.org/1004/rss.xml' },
+  { cat: 'intl_world', name: 'The Independent', url: 'https://www.independent.co.uk/news/world/rss' },
+  { cat: 'intl_business', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/business/rss.xml' },
+  { cat: 'intl_business', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml' },
+  { cat: 'intl_tech', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/technology/rss.xml' },
+  { cat: 'intl_tech', name: 'The Guardian', url: 'https://www.theguardian.com/uk/technology/rss' },
+  { cat: 'intl_tech', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml' },
+  { cat: 'intl_tech', name: 'The Verge', url: 'https://www.theverge.com/rss/index.xml' },
+  { cat: 'intl_tech', name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/index' },
+  { cat: 'intl_science', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml' },
+  { cat: 'intl_science', name: 'The Guardian', url: 'https://www.theguardian.com/science/rss' },
+  { cat: 'intl_science', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml' },
+  { cat: 'intl_science', name: 'Phys.org', url: 'https://phys.org/rss-feed/' },
+  { cat: 'intl_science', name: 'Space Daily', url: 'https://www.spacedaily.com/spacedaily.xml' },
+  { cat: 'intl_health', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/health/rss.xml' },
+  { cat: 'intl_health', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml' },
+  { cat: 'intl_sports', name: 'BBC', url: 'https://feeds.bbci.co.uk/sport/rss.xml' },
+  { cat: 'intl_sports', name: 'The Guardian', url: 'https://www.theguardian.com/uk/sport/rss' },
+  { cat: 'intl_sports', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml' },
+  { cat: 'intl_ent', name: 'The Guardian', url: 'https://www.theguardian.com/uk/culture/rss' },
+  { cat: 'intl_ent', name: 'Variety', url: 'https://variety.com/feed/' },
+  { cat: 'intl_ent', name: 'Deadline', url: 'https://deadline.com/feed/' },
+];
+
+// Two sources per category now, and the reader pages through them 15 at a
+// time, so the cap is what a category can hold rather than what fits a screen.
+const MAX_ITEMS_PER_CATEGORY = 120;
 const RECENCY_HALF_LIFE_HOURS = 12;
 const SIMILARITY_THRESHOLD = 0.5;
 
@@ -166,7 +226,11 @@ function jaccard(a, b) {
 
 // Group near-duplicate stories; coverage = distinct sources + related list size.
 function clusterAndScore(items, now, imageIndex) {
-  for (const item of items) item.image = findImage(imageIndex, item.title);
+  // a publisher feed already supplied its own image; only look one up for
+  // the aggregated items that arrived without one
+  for (const item of items) {
+    if (!item.image) item.image = findImage(imageIndex, item.title);
+  }
   const clusters = [];
   for (const item of items) {
     const tk = tokens(item.title);
@@ -235,6 +299,51 @@ function parseImageFeed(xml) {
 
 const titleKey = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
+// Publisher feeds carry no <source> tag — the outlet is known from the feed
+// itself — and some use <entry>/<link href> instead of <item>/<link>.
+function parsePublisherRss(xml, source) {
+  const items = [];
+  for (const m of xml.matchAll(/<item[ >][\s\S]*?<\/item>|<entry[ >][\s\S]*?<\/entry>/g)) {
+    const block = m[0];
+    const title = tag(block, 'title');
+    let link = tag(block, 'link');
+    if (!link) {
+      const href = block.match(/<link[^>]+href=["']([^"']+)["']/);
+      if (href) link = decodeEntities(href[1]);
+    }
+    const pubDate = tag(block, 'pubDate') || tag(block, 'published') || tag(block, 'updated');
+    if (!title || !/^https?:\/\//i.test(link)) continue;
+    let host = '';
+    try { host = new URL(link).origin; } catch { host = ''; }
+    items.push({
+      title,
+      link,
+      source,
+      sourceUrl: host,
+      pubDate,
+      related: 0,
+      image: itemImage(block),
+    });
+  }
+  return items;
+}
+
+async function fetchPublisherItems(catId) {
+  const feeds = PUBLISHER_SOURCES.filter((f) => f.cat === catId);
+  if (!feeds.length) return [];
+  const lists = await Promise.all(feeds.map(async (f) => {
+    try {
+      const res = await fetch(f.url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parsePublisherRss(await res.text(), f.name);
+    } catch (err) {
+      console.error(`[pub fail] ${f.name} ${f.url.slice(8, 44)}: ${err.message}`);
+      return [];
+    }
+  }));
+  return lists.flat();
+}
+
 async function collectImages() {
   const results = await Promise.all(IMAGE_FEEDS.map(async (url) => {
     try {
@@ -268,17 +377,33 @@ function findImage(index, title) {
 }
 
 async function fetchCategory(cat, now, imageIndex) {
+  // Publisher feeds go first so that when the two sources carry the same
+  // story, the surviving copy is the one with a picture and a direct link.
+  const pub = await fetchPublisherItems(cat.id);
+
+  let google = [];
+  let error = null;
   try {
     const res = await fetch(cat.url, { headers: { 'user-agent': UA } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const xml = await res.text();
-    const items = clusterAndScore(parseRss(xml), now, imageIndex);
-    console.log(`[ok] ${cat.name}: ${items.length} items`);
-    return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
+    google = parseRss(await res.text());
   } catch (err) {
-    console.error(`[fail] ${cat.name}: ${err.message}`);
-    return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items: [], error: err.message };
+    error = err.message;
+    console.error(`[fail] ${cat.name} (google): ${err.message}`);
   }
+
+  if (!pub.length && !google.length) {
+    return {
+      id: cat.id, name: cat.name, lang: cat.lang || 'ko', items: [],
+      error: error || 'no items',
+    };
+  }
+
+  const items = clusterAndScore([...pub, ...google], now, imageIndex);
+  const withImage = items.filter((i) => i.image).length;
+  console.log(`[ok] ${cat.name}: ${items.length} items `
+    + `(pub ${pub.length} + google ${google.length}, ${withImage} with image)`);
+  return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
 }
 
 async function main() {
