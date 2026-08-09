@@ -759,8 +759,10 @@ function importantItems(count) {
     }
   }
   pool.sort((a, b) => b.item.score - a.item.score);
+  // Walk the whole ranked pool, not a fixed window: "더 보기" has to be able
+  // to reach past the first hundred once the near-duplicates are dropped.
   const picked = [];
-  for (const cand of pool.slice(0, 120)) {
+  for (const cand of pool) {
     const tk = titleTokens(cand.item.title);
     if (picked.some((p) => similar(p.tk, tk) >= 0.6)) continue;
     picked.push({ ...cand, tk });
@@ -770,17 +772,40 @@ function importantItems(count) {
 }
 
 function renderImportantWidget(card, widget) {
-  const count = widget.config?.count || 5;
+  const step = widget.config?.count || 5;
   const ul = el('ul', 'news-list flat');
-  for (const { item, catName, translate } of importantItems(count)) {
-    ul.appendChild(newsItemNode(item, { categoryName: catName, translate }));
-  }
-  if (!ul.children.length) card.appendChild(el('p', 'w-empty', '표시할 뉴스가 없습니다.'));
-  else card.appendChild(ul);
+  card.appendChild(ul);
+
+  // The configured count is the starting size, not a ceiling: "더 보기"
+  // keeps walking down the ranked list until it runs out.
+  const more = el('button', 'add-dashed', '');
+  let shown = 0;
+
+  const draw = () => {
+    const rows = importantItems(shown + step);
+    for (const { item, catName, translate } of rows.slice(shown)) {
+      ul.appendChild(newsItemNode(item, { categoryName: catName, translate }));
+    }
+    const grew = rows.length > shown;
+    shown = rows.length;
+    if (!shown) {
+      card.appendChild(el('p', 'w-empty', '표시할 뉴스가 없습니다.'));
+      more.hidden = true;
+      return;
+    }
+    // no growth means the ranked pool is exhausted
+    more.hidden = !grew;
+    more.textContent = `＋ ${step}건 더 보기`;
+    translatePending(ul);
+  };
+
+  draw();
+  more.addEventListener('click', draw);
+  card.appendChild(more);
 }
 
 function configureImportant(widget) {
-  openSheet('표시할 기사 수', [3, 5, 10].map((n) => ({
+  openSheet('처음 보여줄 기사 수 (더 보기로 계속)', [3, 5, 10, 20].map((n) => ({
     label: (widget.config?.count === n ? '✓ ' : '') + `${n}건`,
     onClick() {
       widget.config = { ...widget.config, count: n };
