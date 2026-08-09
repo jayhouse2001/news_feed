@@ -34,6 +34,48 @@ const CATEGORIES = [
   { id: 'intl_ent', name: '해외 연예', url: US_TOPIC('ENTERTAINMENT'), lang: 'en' },
 ];
 
+// Google's feed carries no images and its links never resolve to the
+// publisher, so a thumbnail can only come from a publisher's own RSS. These
+// feeds are fetched alongside and matched to the headlines by title.
+// Measured 2026-08-09: ~1300 images collected, covering ~13% of the feed —
+// most outlets Google aggregates simply do not publish one.
+const IMAGE_FEEDS = [
+  'https://www.yna.co.kr/rss/news.xml',
+  'https://www.yna.co.kr/rss/international.xml',
+  'https://www.yna.co.kr/rss/politics.xml',
+  'https://www.yna.co.kr/rss/economy.xml',
+  'https://www.yna.co.kr/rss/industry.xml',
+  'https://www.yna.co.kr/rss/society.xml',
+  'https://www.yna.co.kr/rss/sports.xml',
+  'https://www.yna.co.kr/rss/culture.xml',
+  'https://www.yna.co.kr/rss/health.xml',
+  'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER',
+  'https://news.sbs.co.kr/news/newsflashRssFeed.do?plink=RSSREADER',
+  'https://rss.donga.com/total.xml',
+  'https://www.mk.co.kr/rss/30000001/',
+  'https://www.mk.co.kr/rss/50100032/',
+  'https://www.mk.co.kr/rss/50200011/',
+  // English feeds for the intl_* categories; these publish an image on
+  // essentially every item, unlike most of what Google aggregates.
+  'https://feeds.bbci.co.uk/news/rss.xml',
+  'https://feeds.bbci.co.uk/news/world/rss.xml',
+  'https://feeds.bbci.co.uk/news/business/rss.xml',
+  'https://feeds.bbci.co.uk/news/technology/rss.xml',
+  'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml',
+  'https://feeds.bbci.co.uk/news/health/rss.xml',
+  'https://feeds.bbci.co.uk/sport/rss.xml',
+  'https://www.theguardian.com/world/rss',
+  'https://www.theguardian.com/uk/technology/rss',
+  'https://www.theguardian.com/science/rss',
+  'https://www.theguardian.com/uk/sport/rss',
+  'https://www.theguardian.com/uk/culture/rss',
+  'https://abcnews.go.com/abcnews/internationalheadlines',
+  'https://feeds.npr.org/1004/rss.xml',
+  'https://variety.com/feed/',
+];
+
+const IMAGE_MATCH_THRESHOLD = 0.55;
+
 const MAX_ITEMS_PER_CATEGORY = 50;
 const RECENCY_HALF_LIFE_HOURS = 12;
 const SIMILARITY_THRESHOLD = 0.5;
@@ -102,7 +144,8 @@ function jaccard(a, b) {
 }
 
 // Group near-duplicate stories; coverage = distinct sources + related list size.
-function clusterAndScore(items, now) {
+function clusterAndScore(items, now, imageIndex) {
+  for (const item of items) item.image = findImage(imageIndex, item.title);
   const clusters = [];
   for (const item of items) {
     const tk = tokens(item.title);
@@ -119,7 +162,10 @@ function clusterAndScore(items, now) {
   const out = [];
   for (const c of clusters) {
     c.members.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-    const rep = c.members[0];
+    // When several outlets covered the same story, show the one that came
+    // with a picture rather than merely the newest.
+    const rep = c.members.find((m) => m.image) || c.members[0];
+    const image = rep.image || c.members.find((m) => m.image)?.image || null;
     const sources = new Set(c.members.map((m) => m.source).filter(Boolean));
     const coverage = Math.max(1, sources.size, rep.related);
     const ageHours = Math.max(0, (now - new Date(rep.pubDate).getTime()) / 3600000);
@@ -133,18 +179,79 @@ function clusterAndScore(items, now) {
       pubDate: rep.pubDate ? new Date(rep.pubDate).toISOString() : null,
       coverage,
       score: Math.round(score * 1000) / 1000,
+      ...(image ? { image } : {}),
     });
   }
   out.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
   return out.slice(0, MAX_ITEMS_PER_CATEGORY);
 }
 
-async function fetchCategory(cat, now) {
+// Publishers advertise the image in whichever element their CMS emits, and
+// some only inline an <img> in the escaped description.
+function itemImage(block) {
+  const m =
+    block.match(/<media:thumbnail[^>]+url=["']([^"']+)["']/) ||
+    block.match(/<media:content[^>]+url=["']([^"']+)["']/) ||
+    block.match(/<enclosure[^>]+url=["']([^"']+)["']/) ||
+    block.match(/&lt;img[^&]*?src=&quot;([^&]+)&quot;/) ||
+    block.match(/<img[^>]+src=["']([^"']+)["']/);
+  if (!m) return null;
+  const url = decodeEntities(m[1]).trim();
+  // http images would be blocked on the https site
+  return /^https:\/\//i.test(url) ? url : null;
+}
+
+function parseImageFeed(xml) {
+  const out = [];
+  for (const m of xml.matchAll(/<item[ >][\s\S]*?<\/item>/g)) {
+    const block = m[0];
+    const title = tag(block, 'title');
+    const img = itemImage(block);
+    if (title && img) out.push({ title, img });
+  }
+  return out;
+}
+
+const titleKey = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+async function collectImages() {
+  const results = await Promise.all(IMAGE_FEEDS.map(async (url) => {
+    try {
+      const res = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseImageFeed(await res.text());
+    } catch (err) {
+      console.error(`[img fail] ${url}: ${err.message}`);
+      return [];
+    }
+  }));
+  const rows = results.flat();
+  const exact = new Map();
+  for (const r of rows) if (!exact.has(titleKey(r.title))) exact.set(titleKey(r.title), r.img);
+  console.log(`[img] ${rows.length} images from ${IMAGE_FEEDS.length} publisher feeds`);
+  return { exact, tokens: rows.map((r) => ({ tk: tokens(r.title), img: r.img })) };
+}
+
+function findImage(index, title) {
+  if (!index) return null;
+  const hit = index.exact.get(titleKey(title));
+  if (hit) return hit;
+  const tk = tokens(title);
+  let best = 0;
+  let img = null;
+  for (const row of index.tokens) {
+    const s = jaccard(tk, row.tk);
+    if (s > best) { best = s; img = row.img; }
+  }
+  return best >= IMAGE_MATCH_THRESHOLD ? img : null;
+}
+
+async function fetchCategory(cat, now, imageIndex) {
   try {
     const res = await fetch(cat.url, { headers: { 'user-agent': UA } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const xml = await res.text();
-    const items = clusterAndScore(parseRss(xml), now);
+    const items = clusterAndScore(parseRss(xml), now, imageIndex);
     console.log(`[ok] ${cat.name}: ${items.length} items`);
     return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
   } catch (err) {
@@ -155,7 +262,8 @@ async function fetchCategory(cat, now) {
 
 async function main() {
   const now = Date.now();
-  const categories = await Promise.all(CATEGORIES.map((c) => fetchCategory(c, now)));
+  const imageIndex = await collectImages();
+  const categories = await Promise.all(CATEGORIES.map((c) => fetchCategory(c, now, imageIndex)));
   const okCount = categories.filter((c) => !c.error).length;
   if (okCount === 0) {
     console.error('all categories failed');

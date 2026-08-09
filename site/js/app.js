@@ -369,6 +369,21 @@ function newsItemNode(item, opts) {
   more.setAttribute('aria-label', '기사 옵션');
   more.addEventListener('click', () => openItemSheet(item));
   top.appendChild(more);
+
+  // Only a minority of articles carry a picture, so the thumbnail sits beside
+  // the headline and the row keeps its height when there is none.
+  if (item.image) {
+    const thumb = document.createElement('img');
+    thumb.className = 'thumb';
+    thumb.src = item.image;
+    thumb.alt = '';
+    thumb.loading = 'lazy';
+    thumb.decoding = 'async';
+    thumb.referrerPolicy = 'no-referrer';
+    // a dead or hotlink-blocked image must not leave a broken icon
+    thumb.addEventListener('error', () => thumb.remove());
+    top.insertBefore(thumb, more);
+  }
   li.appendChild(top);
 
   const meta = el('div', 'meta');
@@ -852,6 +867,9 @@ function buildDashboard() {
 
 // ---------- category page ----------
 
+// how many articles a category shows before "더 보기" is needed
+const PAGE_STEP = 15;
+
 function buildCategoryPage(cat) {
   const page = el('section', 'page');
   page.dataset.pullRefresh = 'true';
@@ -883,9 +901,27 @@ function buildCategoryPage(cat) {
   if (!items.length) {
     inner.appendChild(el('p', 'placeholder', '표시할 기사가 없습니다.'));
   } else {
+    // Render a first screenful and grow on demand: drawing all 50 cards up
+    // front costs layout time on every tab switch for rows nobody scrolls to.
     const ul = el('ul', 'news-list');
-    for (const item of items) ul.appendChild(newsItemNode(item, { translate }));
+    let shown = 0;
+    const more = el('button', 'add-dashed', '');
+
+    const draw = () => {
+      const next = items.slice(shown, shown + PAGE_STEP);
+      for (const item of next) ul.appendChild(newsItemNode(item, { translate }));
+      shown += next.length;
+      const left = items.length - shown;
+      more.hidden = left <= 0;
+      more.textContent = `＋ ${Math.min(left, PAGE_STEP)}건 더 보기 (남은 ${left}건)`;
+      // newly added foreign titles still need translating
+      translatePending(ul);
+    };
+    draw();
+
+    more.addEventListener('click', draw);
     inner.appendChild(ul);
+    inner.appendChild(more);
   }
 
   page.appendChild(inner);
@@ -1970,6 +2006,33 @@ async function readClipboard() {
   }
 }
 
+// ---------- share this app ----------
+
+// The address to hand out is the deployed page, not whatever query or hash
+// the current session happens to carry.
+function appShareUrl() {
+  return location.origin + location.pathname.replace(/index\.html$/, '');
+}
+
+async function shareApp() {
+  const url = appShareUrl();
+  const data = { title: '뉴스 피드', text: '뉴스 피드 — 카테고리·이슈 트래커', url };
+  // navigator.share needs a user gesture and a secure context; a cancelled
+  // sheet also rejects, which must not look like a failure.
+  if (navigator.share) {
+    try {
+      await navigator.share(data);
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+  const copied = await copyText(url);
+  openSheet(copied ? '주소를 복사했습니다' : '주소', [
+    { label: url, onClick() { copyText(url); } },
+  ]);
+}
+
 function openAiImport(tracker) {
   openPanel('AI로 타임라인 채우기', (body) => {
     const step1 = el('div', 'set-section');
@@ -2444,6 +2507,8 @@ function syncPageIndicator() {
   const page = pages[i];
   if (!page) return;
   document.getElementById('page-title').textContent = page.title;
+  // sharing the app belongs to its front page, not to a category listing
+  document.getElementById('share-btn').hidden = activeTab !== 'dash';
   document.querySelectorAll('.pagedots .dot').forEach((d, n) => {
     d.classList.toggle('on', n === i);
   });
@@ -2909,6 +2974,62 @@ async function refreshNews() {
   }
 }
 
+// ---------- edge swipe between tabs ----------
+
+// Inside the news tab a horizontal swipe moves between categories, and the
+// pager consumes it. Only at the very first or last page does a swipe have
+// nowhere to go, and that is where it hands over to the neighbouring tab.
+function setupEdgeSwipe() {
+  const pager = document.getElementById('pager');
+  const THRESHOLD = 60;
+  let g = null;
+
+  pager.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const atStart = pager.scrollLeft <= 1;
+    const atEnd = pager.scrollLeft >= pager.scrollWidth - pager.clientWidth - 1;
+    if (!atStart && !atEnd) return;
+    const t = e.touches[0];
+    g = { x: t.clientX, y: t.clientY, atStart, atEnd, axis: null };
+  }, { passive: true });
+
+  pager.addEventListener('touchmove', (e) => {
+    if (!g || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - g.x;
+    const dy = t.clientY - g.y;
+    if (g.axis === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      // let pull-to-refresh own anything vertical
+      g.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+    if (g.axis !== 'x') return;
+    g.dx = dx;
+  }, { passive: true });
+
+  const settle = () => {
+    if (!g) return;
+    const { dx, axis, atStart, atEnd } = g;
+    g = null;
+    if (axis !== 'x' || !dx || Math.abs(dx) < THRESHOLD) return;
+
+    const order = TABS.map((t) => t.id);
+    const i = order.indexOf(activeTab);
+    // swiping left (dx < 0) at the last page moves to the next tab
+    if (dx < 0 && atEnd && i < order.length - 1) {
+      tabIndex[order[i + 1]] = 0;
+      switchTab(order[i + 1]);
+    } else if (dx > 0 && atStart && i > 0) {
+      const prev = order[i - 1];
+      // arriving backwards should land on that tab's last page
+      tabIndex[prev] = prev === 'news' ? Math.max(0, enabledCategories().length - 1) : 0;
+      switchTab(prev);
+    }
+  };
+
+  pager.addEventListener('touchend', settle);
+  pager.addEventListener('touchcancel', () => { g = null; });
+}
+
 // ---------- pull to refresh ----------
 
 function setupPullToRefresh() {
@@ -2992,6 +3113,7 @@ function setupPullToRefresh() {
 
 async function main() {
   document.getElementById('settings-btn').addEventListener('click', openSettings);
+  document.getElementById('share-btn').addEventListener('click', shareApp);
   document.getElementById('refresh-btn').addEventListener('click', refreshNews);
 
   try {
@@ -3006,6 +3128,7 @@ async function main() {
   rebuildPages();
   restoreViewState();
   setupPullToRefresh();
+  setupEdgeSwipe();
 
   const pager = document.getElementById('pager');
   let raf = 0;

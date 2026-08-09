@@ -280,6 +280,15 @@ button:disabled { opacity: .35; cursor: default; }
   color: var(--muted);
   vertical-align: 2px;
 }
+.thumb {
+  flex: none;
+  width: 76px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  margin-top: 1px;
+}
 .more {
   flex: none;
   border: 0;
