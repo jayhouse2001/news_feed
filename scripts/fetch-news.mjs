@@ -51,10 +51,16 @@ const IMAGE_FEEDS = [
   'https://www.yna.co.kr/rss/health.xml',
   'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER',
   'https://news.sbs.co.kr/news/newsflashRssFeed.do?plink=RSSREADER',
+  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER',
+  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02&plink=RSSREADER',
+  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=03&plink=RSSREADER',
+  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=08&plink=RSSREADER',
   'https://rss.donga.com/total.xml',
   'https://www.mk.co.kr/rss/30000001/',
   'https://www.mk.co.kr/rss/50100032/',
   'https://www.mk.co.kr/rss/50200011/',
+  'https://www.asiae.co.kr/rss/all.htm',
+  'https://newsis.com/RSS/health.xml',
   // English feeds for the intl_* categories; these publish an image on
   // essentially every item, unlike most of what Google aggregates.
   'https://feeds.bbci.co.uk/news/rss.xml',
@@ -72,6 +78,21 @@ const IMAGE_FEEDS = [
   'https://abcnews.go.com/abcnews/internationalheadlines',
   'https://feeds.npr.org/1004/rss.xml',
   'https://variety.com/feed/',
+  'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml',
+  'https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml',
+  'https://feeds.nbcnews.com/nbcnews/public/news',
+  'https://feeds.nbcnews.com/nbcnews/public/world',
+  'https://www.independent.co.uk/news/world/rss',
+  'https://phys.org/rss-feed/',
+  'https://www.spacedaily.com/spacedaily.xml',
+  'https://www.theverge.com/rss/index.xml',
+  'https://feeds.arstechnica.com/arstechnica/index',
+  'https://deadline.com/feed/',
 ];
 
 const IMAGE_MATCH_THRESHOLD = 0.55;
