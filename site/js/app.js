@@ -1763,12 +1763,26 @@ function openTrackerEditor(tracker) {
   });
 }
 
-function openTrackerTimeline(tracker) {
+function openTrackerTimeline(tracker, refreshNotice = '') {
   markTrackerSeen(tracker);
   openPanel(tracker.name, (body) => {
     const bar = el('div', 'sortrow');
     bar.appendChild(el('span', null,
       `${TRACKER_STATUS[tracker.status]} · ${tracker.events.length}건`));
+    if (tracker.status === 'active') {
+      const refresh = el('button', 'sort-btn', '↻ 새 뉴스 확인');
+      refresh.addEventListener('click', async () => {
+        refresh.disabled = true;
+        refresh.textContent = '확인 중…';
+        const before = tracker.events.length;
+        const ok = await refreshNews();
+        const added = tracker.events.length - before;
+        openTrackerTimeline(tracker, ok
+          ? (added ? `새 기사 ${added}건을 추가했습니다.` : '새로 추가된 기사가 없습니다.')
+          : '뉴스 업데이트에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+      });
+      bar.appendChild(refresh);
+    }
     const past = el('button', 'sort-btn', '↩ 과거 소급');
     past.addEventListener('click', () => openBackfill(tracker));
     bar.appendChild(past);
@@ -1776,6 +1790,8 @@ function openTrackerTimeline(tracker) {
     edit.addEventListener('click', () => openTrackerEditor(tracker));
     bar.appendChild(edit);
     body.appendChild(bar);
+
+    if (refreshNotice) body.appendChild(el('p', 'set-desc', refreshNotice));
 
     const acts = el('div', 'add-form');
     const addNote = el('button', 'add-dashed', '＋ 직접 추가');
@@ -2979,7 +2995,7 @@ async function loadNews() {
 let refreshing = false;
 
 async function refreshNews() {
-  if (refreshing) return;
+  if (refreshing) return false;
   refreshing = true;
   const btn = document.getElementById('refresh-btn');
   btn.classList.add('spinning');
@@ -2990,9 +3006,11 @@ async function refreshNews() {
     collectTrackers();
     rebuildPages();
     showUpdatedAt();
+    return true;
   } catch {
     label.textContent = '업데이트 실패';
     setTimeout(showUpdatedAt, 2000);
+    return false;
   } finally {
     btn.classList.remove('spinning');
     refreshing = false;
