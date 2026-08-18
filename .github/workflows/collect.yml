@@ -1,4 +1,4 @@
-name: Collect news and deploy Pages
+name: Collect news and deploy
 
 on:
   schedule:
@@ -22,6 +22,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,3 +44,16 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # The collected news.json is never committed, so pushing to master cannot
+      # carry it to Cloudflare — the built directory is uploaded directly. The
+      # step is skipped until the secrets exist, and a Cloudflare failure must
+      # not fail a run whose GitHub Pages deploy already succeeded.
+      - name: Deploy to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
+        run: |
+          npx --yes wrangler@4 pages deploy site \
+            --project-name=news-feeder \
+            --branch=master \
+            --commit-dirty=true
