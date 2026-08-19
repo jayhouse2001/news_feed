@@ -12,4 +12,4 @@ crons = ["*/30 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "news-feeder"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "f40060f0-afd0-42f3-86f6-86198e1522bd"
