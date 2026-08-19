@@ -88,7 +88,7 @@ export function validateTracker(body) {
 
   const status = body.status === 'closed' ? 'closed' : 'active';
   const order = body.order === 'asc' ? 'asc' : 'desc';
-  const perDay = Math.min(50, Math.max(1, Number(body.perDay) || 8));
+  const perDay = Math.min(50, Math.max(1, Number(body.perDay) || 2));
   const from = /^\d{4}-\d{2}-\d{2}$/.test(body.from || '') ? body.from : monthsAgo(6);
 
   return {
@@ -103,6 +103,21 @@ export function validateTracker(body) {
     allSources: !!body.allSources,
     order,
   };
+}
+
+// Sources that are never a news outlet, whatever the keyword matched. Found in
+// live results: a site filing game and gambling copy that carried the search
+// terms in its body, and a machine-translation farm posting the same sentence
+// twice. Applied even with "all sources" on — that switch widens past the
+// major-outlet list, it does not remove the floor.
+export const BLOCKED_SOURCES = [
+  'gwara', 'vietnam.vn', 'vietnam.', 'baohaiduong',
+];
+
+export function isBlockedSource(source) {
+  const s = (source || '').trim().toLowerCase();
+  if (!s) return false;
+  return BLOCKED_SOURCES.some((b) => s.includes(b));
 }
 
 export function trackerMatches(tracker, title) {

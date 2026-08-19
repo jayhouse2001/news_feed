@@ -3,7 +3,8 @@
 // CORS relay in the way — a Worker can call news.google.com directly, which is
 // the single biggest reason to run this here rather than on the device.
 
-import { titleTokens, similar, DEDUP_SIM, dayOf, trackerMatches, searchQuery } from './tracker.js';
+import { titleTokens, similar, DEDUP_SIM, dayOf, trackerMatches, searchQuery,
+         isBlockedSource } from './tracker.js';
 
 const GNEWS_MAX = 100;
 
@@ -197,6 +198,7 @@ export async function sweepTracker(env, tracker, { force = false } = {}) {
       const title = a.title.trim();
       if (!title) continue;
       if ((tracker.all.length || tracker.any.length) && !trackerMatches(tracker, title)) continue;
+      if (isBlockedSource(a.source)) continue;
       if (!tracker.allSources && !isMajor(a.source)) continue;
       seen.add(a.link);
       candidates.push({
@@ -215,7 +217,7 @@ export async function sweepTracker(env, tracker, { force = false } = {}) {
     byDay.get(c.date).push(c);
   }
 
-  const perDay = tracker.perDay || 8;
+  const perDay = tracker.perDay || 2;
   const inserts = [];
   const capped = [];
   const ts = new Date().toISOString();

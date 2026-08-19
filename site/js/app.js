@@ -1252,7 +1252,11 @@ const MAJOR_DOMAINS = [
   'mk.co.kr', 'hankyung.com', 'edaily.co.kr', 'sedaily.com', 'asiae.co.kr',
 ];
 
-const DEFAULT_PER_DAY = 8;
+// Two, not eight. A tracker is read to see how an issue moved, not to count
+// coverage — and a busy day yields 26 articles, which buries the shape of the
+// story under repetition. The ones past the cap are kept and folded away rather
+// than dropped, so a day can still be opened up.
+const DEFAULT_PER_DAY = 2;
 
 // Waits between retries of a throttled window. A blocked IP stays blocked for
 // a while, so the gaps grow; 0 ends the attempts for that window.
@@ -1267,6 +1271,21 @@ const MAJOR_NAMES = [
   '국민일보', '프레시안', '오마이뉴스',
   '매일경제', '한국경제', '이데일리', '서울경제', '아시아경제',
 ];
+
+// Sources that are never a news outlet, whatever the keyword matched. Found in
+// live results: a site filing game and gambling copy that happened to carry the
+// search terms in its body, and a machine-translation farm posting the same
+// sentence twice. Applied even with "all sources" on — that switch is for
+// widening past the major-outlet list, not for turning off the floor.
+const BLOCKED_SOURCES = [
+  'gwara', 'vietnam.vn', 'vietnam.', 'baohaiduong',
+];
+
+function isBlockedSource(source) {
+  const s = (source || '').trim().toLowerCase();
+  if (!s) return false;
+  return BLOCKED_SOURCES.some((b) => s.includes(b));
+}
 
 function isMajorDomain(source) {
   if (!source) return false;
@@ -1580,6 +1599,7 @@ async function runBackfill(tracker, onProgress, opts) {
       if (!a.url || seen.has(a.url)) continue;
       const title = (a.title || '').trim();
       if (!title || !backfillKeeps(tracker, title)) continue;
+      if (isBlockedSource(a.domain)) { filtered++; continue; }
       if (!allSources && !isMajorDomain(a.domain)) { filtered++; continue; }
       seen.add(a.url);
       candidates.push({
@@ -1821,7 +1841,7 @@ function openBackfill(tracker) {
     const opt = el('div', 'set-section');
     opt.appendChild(el('div', 'set-title', '하루에 남길 기사 수'));
     const segRow = el('div', 'segrow');
-    for (const n of [3, 5, 8, 15]) {
+    for (const n of [1, 2, 3, 5]) {
       const cur = tracker.perDay || DEFAULT_PER_DAY;
       const b = el('button', 'seg' + (cur === n ? ' on' : ''), `${n}건`);
       b.addEventListener('click', () => {
@@ -2084,6 +2104,18 @@ function openTrackerEditor(tracker) {
   });
 }
 
+// Days the reader expanded, and which issue they belong to. Kept outside the
+// panel because the timeline is redrawn from scratch on every sort flip, delete
+// and refresh, and collapsing what someone just opened would be its own bug —
+// but tied to a tracker id, so opening a different issue does not inherit it.
+let expandedDays = new Set();
+let expandedFor = null;
+
+// How many articles a day shows before it folds. The collection keeps
+// everything; this is only what the eye sees first, so the number can change
+// without re-collecting anything.
+const DAY_PREVIEW = 2;
+
 function openTrackerTimeline(tracker, refreshNotice = '') {
   // Server trackers arrive from the list without their events; fetch them on
   // first open, then re-enter with the full object.
@@ -2097,6 +2129,10 @@ function openTrackerTimeline(tracker, refreshNotice = '') {
         body.appendChild(el('p', 'placeholder', `불러오지 못했습니다: ${err.message}`));
       }));
     return;
+  }
+  if (expandedFor !== tracker.id) {
+    expandedDays = new Set();
+    expandedFor = tracker.id;
   }
   markTrackerSeen(tracker);
   openPanel(tracker.name, (body) => {
@@ -2184,8 +2220,15 @@ function openTrackerTimeline(tracker, refreshNotice = '') {
       head.appendChild(el('span', 'tl-count', `${day.list.length}건`));
       card.appendChild(head);
 
+      // A day shows its most-reported few and folds the rest. What the issue is
+      // for is the shape of the story over time, and twenty articles from one
+      // busy day hide that shape rather than adding to it.
+      const open = expandedDays.has(day.date);
+      const shown = open ? day.list : day.list.slice(0, DAY_PREVIEW);
+      const hidden = day.list.length - shown.length;
+
       const ul = el('ul', 'tl-links');
-      for (const ev of day.list) {
+      for (const ev of shown) {
         const li = el('li');
         if (ev.note) {
           const box = el('div', 'tl-note');
@@ -2237,6 +2280,19 @@ function openTrackerTimeline(tracker, refreshNotice = '') {
         ul.appendChild(li);
       }
       card.appendChild(ul);
+
+      if (hidden > 0 || open) {
+        const more = el('button', 'tl-more', open
+          ? '⌃ 접기'
+          : `⌄ 이 날 기사 ${hidden}건 더 보기`);
+        more.addEventListener('click', () => {
+          if (open) expandedDays.delete(day.date);
+          else expandedDays.add(day.date);
+          openTrackerTimeline(tracker, refreshNotice);
+        });
+        card.appendChild(more);
+      }
+
       bodyCol.appendChild(card);
       row.appendChild(bodyCol);
       tl.appendChild(row);

@@ -10,7 +10,8 @@
 // So the two halves split by what they are for: history is searched from the
 // device on demand, and today's news is matched on the server every half hour.
 
-import { titleTokens, similar, DEDUP_SIM, rowToTracker, trackerMatches } from './tracker.js';
+import { titleTokens, similar, DEDUP_SIM, rowToTracker, trackerMatches,
+         isBlockedSource } from './tracker.js';
 
 // Folds a batch of freshly collected articles into every active tracker.
 // Articles arrive as the news collection's own items, so they carry the fields
@@ -29,6 +30,7 @@ export async function matchArticles(env, articles) {
     if (!tracker.all.length && !tracker.any.length) continue;
 
     const hits = articles.filter((a) => a.title && a.link
+      && !isBlockedSource(a.source)
       && trackerMatches(tracker, a.title));
     if (!hits.length) continue;
 
@@ -52,7 +54,7 @@ export async function matchArticles(env, articles) {
       perDayCount.set(r.date, (perDayCount.get(r.date) || 0) + 1);
     }
 
-    const perDay = tracker.perDay || 8;
+    const perDay = tracker.perDay || 2;
     const inserts = [];
     const ts = new Date().toISOString();
 
