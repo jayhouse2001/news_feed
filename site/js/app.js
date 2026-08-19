@@ -154,6 +154,23 @@ function sortItems(items, mode) {
 
 // ---------- overlay: sheet + panel ----------
 
+let toastTimer = null;
+
+// Brief confirmation for actions that finish on a screen that shows no trace
+// of them — pinning an article to a tracker leaves the reader in the feed.
+function toast(msg) {
+  let box = document.getElementById('toast');
+  if (!box) {
+    box = el('div', 'toast');
+    box.id = 'toast';
+    document.body.appendChild(box);
+  }
+  box.textContent = msg;
+  box.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.remove('on'), 2200);
+}
+
 function overlayRoot() {
   return document.getElementById('overlay-root');
 }
@@ -463,9 +480,13 @@ function openItemSheet(item) {
     label: isSaved(item.link) ? '★ 스크랩에서 빼기' : '☆ 스크랩에 저장',
     onClick() { toggleSaved(item); },
   }];
+  actions.push({
+    label: '◷ 이 뉴스를 이슈로 추적',
+    onClick() { trackFromArticle(item); },
+  });
   if (S.trackers.length) {
     actions.push({
-      label: '◷ 이슈에 추가…',
+      label: '＋ 기존 이슈에 추가…',
       onClick() { addToTrackerSheet(item); },
     });
   }
@@ -976,6 +997,79 @@ function sortEvents(tracker) {
   tracker.events.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 }
 
+// Particles and generic news words carry no topic, so a headline's keywords
+// are what is left after they are stripped. Korean is not tokenized here —
+// the trailing particle is trimmed instead, which is enough for title
+// substring matching since "이란은" still contains "이란".
+const STOP_WORDS = new Set([
+  '뉴스', '속보', '단독', '종합', '오늘', '내일', '어제', '올해', '작년', '지난',
+  '관련', '대한', '위해', '통해', '따라', '대해', '이번', '최근', '현재', '상황',
+  '기자', '보도', '전망', '분석', '가능', '예정', '계획', '발표', '밝혀', '말해',
+  '사진', '영상', 'the', 'and', 'for', 'with', 'from', 'that', 'this', 'says',
+  'said', 'will', 'new', 'news', 'over', 'into', 'after', 'amid',
+]);
+
+const PARTICLES = ['에서는', '으로', '에서', '에게', '까지', '부터', '이라', '라고',
+  '과의', '와의', '에도', '에는',
+  '의', '은', '는', '이', '가', '을', '를', '에', '서', '도', '만', '과', '와', '로'];
+
+// Headlines end in a conjugated verb ("발표했다", "밝혔다"), which says what
+// happened rather than what the story is about, so it makes a poor keyword.
+const VERB_TAIL = /(했다|한다|된다|됐다|였다|이다|합니다|밝혔다|나섰다|보인다|중이다|해야|하나)$/;
+
+function trimParticle(w) {
+  if (!/[가-힣]$/.test(w)) return w;
+  for (const part of PARTICLES) {
+    if (w.length > part.length + 1 && w.endsWith(part)) return w.slice(0, -part.length);
+  }
+  return w;
+}
+
+// Picks the words a reader would call "what this story is about". Used to seed
+// a tracker straight from an article, so the user never types a keyword.
+function suggestKeywords(title, limit = 4) {
+  const words = (title || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => !VERB_TAIL.test(w))
+    .map(trimParticle)
+    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w.toLowerCase()) && !/^\d+$/.test(w));
+  const out = [];
+  for (const w of words) {
+    if (!out.some((x) => x.toLowerCase() === w.toLowerCase())) out.push(w);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// Cross-source dedup. The same story reaches a timeline three ways — the
+// half-hourly feed, a Google News sweep, a hand pin — and each carries its own
+// url, so url equality alone lets the wire copy and the daily's rewrite both
+// through. Same day plus near-identical title is the test that catches those.
+const DEDUP_SIM = 0.6;
+
+// Pre-bucketing existing titles by day keeps a long sweep from going quadratic
+// over a timeline holding hundreds of entries.
+function dedupIndex(tracker) {
+  const idx = new Map();
+  for (const e of tracker.events) {
+    if (!idx.has(e.date)) idx.set(e.date, []);
+    idx.get(e.date).push(titleTokens(e.title));
+  }
+  return idx;
+}
+
+function isDuplicate(index, date, title) {
+  const tk = titleTokens(title);
+  return (index.get(date) || []).some((t) => similar(t, tk) >= DEDUP_SIM);
+}
+
+function indexAdd(index, date, title) {
+  if (!index.has(date)) index.set(date, []);
+  index.get(date).push(titleTokens(title));
+}
+
 function trackerMatches(tracker, item) {
   const title = item.title.toLowerCase();
   const all = (tracker.all || []).map((w) => w.toLowerCase());
@@ -993,12 +1087,18 @@ function collectTrackers() {
     if (tracker.status !== 'active') continue;
     const seen = new Set(tracker.events.map((e) => e.url));
     for (const url of tracker.dropped || []) seen.add(url);
+    const index = dedupIndex(tracker);
     for (const cat of newsData.categories) {
       for (const item of cat.items) {
         if (seen.has(item.link) || isBlocked(item) || !trackerMatches(tracker, item)) continue;
+        const date = dayOf(item.pubDate);
+        // one story reaches several categories and the wires rewrite each
+        // other, so a near-identical title already on that day is not news
+        if (isDuplicate(index, date, item.title)) continue;
         seen.add(item.link);
+        indexAdd(index, date, item.title);
         tracker.events.push({
-          date: dayOf(item.pubDate),
+          date,
           title: item.title,
           source: item.source || '',
           url: item.link,
@@ -1014,18 +1114,23 @@ function collectTrackers() {
   return added;
 }
 
-function eventsByDay(tracker) {
+// desc = newest day first (what is happening now), asc = oldest first (how it
+// started). Kept per issue: a running story is read from the top, a finished
+// one from the beginning.
+function eventsByDay(tracker, order) {
+  const dir = order || tracker.order || 'desc';
   const days = new Map();
   for (const ev of tracker.events) {
     if (!days.has(ev.date)) days.set(ev.date, []);
     days.get(ev.date).push(ev);
   }
-  // most reported first within a day, newest day first
+  // most reported first within a day
   const out = [...days.entries()].map(([date, list]) => ({
     date,
     list: list.slice().sort((a, b) => (b.coverage || 0) - (a.coverage || 0)),
   }));
-  out.sort((a, b) => (a.date < b.date ? 1 : -1));
+  out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  if (dir === 'asc') out.reverse();
   return out;
 }
 
@@ -1429,18 +1534,25 @@ async function runBackfill(tracker, onProgress, opts) {
   // re-fetches them and the timeline keeps growing past the limit
   if (!tracker.skippedUrls) tracker.skippedUrls = [];
   const stamp = new Date().toISOString();
-  for (const [, list] of byDay) {
+  // Seeded with the entries already on the timeline: without this a sweep
+  // re-adds the same story the live feed collected under a different url,
+  // and the day fills up with rewrites of one headline.
+  const index = dedupIndex(tracker);
+  for (const [day, list] of byDay) {
     list.sort((a, b) => rank(a.source) - rank(b.source));
+    const already = (index.get(day) || []).length;
     const kept = [];
     for (const c of list) {
       const tk = titleTokens(c.title);
-      if (kept.some((k) => similar(k.tk, tk) >= 0.6)
-          || kept.length >= perDay) {
+      if (isDuplicate(index, day, c.title)
+          || kept.some((k) => similar(k.tk, tk) >= DEDUP_SIM)
+          || kept.length + already >= perDay) {
         capped++;
         tracker.skippedUrls.push(c.url);
         continue;
       }
       kept.push({ ...c, tk });
+      indexAdd(index, day, c.title);
       tracker.events.push({
         date: c.date,
         title: c.title,
@@ -1475,6 +1587,94 @@ function backfillQuery(tracker) {
   return (tracker.kr
     || (tracker.any.length ? tracker.any.join(' OR ') : tracker.all.join(' '))
     || '').trim();
+}
+
+// One action instead of three. "Update" means: take today's feed, then sweep
+// the whole span from the issue's start date to now, and merge both into the
+// single timeline. The user picked the issue by reading an article, so they
+// should not have to know that recent news and old news arrive by different
+// routes.
+async function runUpdate(tracker, onProgress) {
+  onProgress('최신 뉴스 확인 중…');
+  const before = tracker.events.length;
+  let feedOk = true;
+  try {
+    feedOk = await refreshNews();
+  } catch {
+    feedOk = false;
+  }
+  const fromFeed = tracker.events.length - before;
+
+  let sweep = null;
+  let sweepError = null;
+  if (backfillQuery(tracker) || tracker.en) {
+    try {
+      sweep = await runBackfill(tracker, onProgress, { force: false });
+    } catch (err) {
+      sweepError = err.message;
+    }
+  }
+  return { feedOk, fromFeed, sweep, sweepError };
+}
+
+function updateSummary(r) {
+  const parts = [];
+  const swept = r.sweep && !r.sweep.upToDate ? r.sweep.added : 0;
+  const total = r.fromFeed + swept;
+  parts.push(total ? `기사 ${total}건을 타임라인에 추가했습니다.` : '새로 추가된 기사가 없습니다.');
+  if (r.fromFeed && swept) parts.push(`(최신 ${r.fromFeed}건 · 과거 ${swept}건)`);
+  if (r.sweep && r.sweep.upToDate) {
+    parts.push('설정한 시작일까지는 이미 다 모았습니다. 더 과거를 보려면 시작일을 앞당기세요.');
+  }
+  if (r.sweep && r.sweep.capped) parts.push(`중복·하루 상한으로 ${r.sweep.capped}건 제외.`);
+  if (r.sweep && r.sweep.rateBlocked) {
+    parts.push('요청 제한으로 일부 구간을 못 받았습니다. 잠시 후 다시 누르면 이어서 채웁니다.');
+  } else if (r.sweep && r.sweep.skipped) {
+    parts.push(`${r.sweep.skipped}개 구간은 나중에 이어서 채웁니다.`);
+  }
+  if (r.sweepError) parts.push(`과거 수집 실패: ${r.sweepError}`);
+  if (!r.feedOk) parts.push('최신 뉴스 갱신에 실패했습니다.');
+  return parts.join(' ');
+}
+
+// Shown while an update runs so the sweep's progress is visible; on finish it
+// hands straight back to the timeline with the result as a notice.
+function openTrackerUpdate(tracker, auto = false) {
+  openPanel('업데이트', (body) => {
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', tracker.name));
+    sec.appendChild(el('p', 'choice-hint',
+      `${tracker.from || monthsAgo(6)} 부터 오늘까지의 관련 기사를 모아 날짜순으로 이어붙입니다. `
+      + `검색어: ${backfillQuery(tracker) || '(없음)'}`));
+    body.appendChild(sec);
+
+    const status = el('p', 'placeholder', '');
+    const run = el('button', 'primary', '지금 업데이트');
+    run.style.width = '100%';
+
+    const go = async () => {
+      run.disabled = true;
+      run.textContent = '업데이트 중…';
+      try {
+        const r = await runUpdate(tracker, (msg) => { status.textContent = msg; });
+        rebuildPages();
+        openTrackerTimeline(tracker, updateSummary(r));
+      } catch (err) {
+        status.textContent = `실패: ${err.message}`;
+        run.disabled = false;
+        run.textContent = '다시 시도';
+      }
+    };
+    run.addEventListener('click', go);
+    body.appendChild(run);
+    body.appendChild(status);
+
+    const opts = el('button', 'add-dashed', '⚙ 수집 범위·매체 설정');
+    opts.addEventListener('click', () => openBackfill(tracker));
+    body.appendChild(opts);
+
+    if (auto) go();
+  });
 }
 
 function openBackfill(tracker) {
@@ -1766,50 +1966,65 @@ function openTrackerEditor(tracker) {
 function openTrackerTimeline(tracker, refreshNotice = '') {
   markTrackerSeen(tracker);
   openPanel(tracker.name, (body) => {
+    const order = tracker.order || 'desc';
     const bar = el('div', 'sortrow');
     bar.appendChild(el('span', null,
       `${TRACKER_STATUS[tracker.status]} · ${tracker.events.length}건`));
+
+    // Sorting is the one control that has to stay visible: the same timeline
+    // reads as "what is happening now" from the top and "how this started"
+    // from the bottom, and which one is wanted changes per issue.
+    const sortBtn = el('button', 'sort-btn',
+      order === 'desc' ? '↓ 최신순' : '↑ 오래된순');
+    sortBtn.addEventListener('click', () => {
+      tracker.order = order === 'desc' ? 'asc' : 'desc';
+      save();
+      openTrackerTimeline(tracker, refreshNotice);
+    });
+    bar.appendChild(sortBtn);
+
     if (tracker.status === 'active') {
-      const refresh = el('button', 'sort-btn', '↻ 새 뉴스 확인');
-      refresh.addEventListener('click', async () => {
-        refresh.disabled = true;
-        refresh.textContent = '확인 중…';
-        const before = tracker.events.length;
-        const ok = await refreshNews();
-        const added = tracker.events.length - before;
-        openTrackerTimeline(tracker, ok
-          ? (added ? `새 기사 ${added}건을 추가했습니다.` : '새로 추가된 기사가 없습니다.')
-          : '뉴스 업데이트에 실패했습니다. 잠시 후 다시 시도해 주세요.');
-      });
-      bar.appendChild(refresh);
+      const upd = el('button', 'sort-btn primary-btn', '↻ 업데이트');
+      upd.addEventListener('click', () => openTrackerUpdate(tracker, true));
+      bar.appendChild(upd);
     }
-    const past = el('button', 'sort-btn', '↩ 과거 소급');
-    past.addEventListener('click', () => openBackfill(tracker));
-    bar.appendChild(past);
-    const edit = el('button', 'sort-btn', '이슈 편집');
-    edit.addEventListener('click', () => openTrackerEditor(tracker));
-    bar.appendChild(edit);
+    const more = el('button', 'sort-btn', '⋯');
+    more.setAttribute('aria-label', '이슈 옵션');
+    more.addEventListener('click', () => {
+      openSheet(tracker.name, [
+        { label: '＋ 뉴스에서 골라 추가', onClick() { openPickArticles(tracker); } },
+        { label: '✎ 직접 입력해 추가', onClick() { openNoteEditor(tracker, null); } },
+        { label: '⚙ 수집 범위·매체 설정', onClick() { openBackfill(tracker); } },
+        { label: '✎ 이슈 편집', onClick() { openTrackerEditor(tracker); } },
+        { label: '✦ AI로 채우기', onClick() { openAiImport(tracker); } },
+      ]);
+    });
+    bar.appendChild(more);
     body.appendChild(bar);
 
     if (refreshNotice) body.appendChild(el('p', 'set-desc', refreshNotice));
 
-    const acts = el('div', 'add-form');
-    const addNote = el('button', 'add-dashed', '＋ 직접 추가');
-    addNote.style.flex = '1';
-    addNote.addEventListener('click', () => openNoteEditor(tracker, null));
-    acts.appendChild(addNote);
-    const aiBtn = el('button', 'add-dashed', '✦ AI로 채우기');
-    aiBtn.style.flex = '1';
-    aiBtn.addEventListener('click', () => openAiImport(tracker));
-    acts.appendChild(aiBtn);
-    body.appendChild(acts);
-
-    const days = eventsByDay(tracker);
+    const days = eventsByDay(tracker, order);
     if (!days.length) {
       body.appendChild(el('p', 'placeholder',
-        '아직 모인 기사가 없습니다. 새로고침하면 키워드에 맞는 기사가 쌓입니다.'));
+        '아직 모인 기사가 없습니다. 업데이트를 누르면 시작일부터 오늘까지의 기사를 모읍니다.'));
+      const first = el('button', 'primary', '↻ 지금 업데이트');
+      first.style.width = '100%';
+      first.addEventListener('click', () => openTrackerUpdate(tracker, true));
+      body.appendChild(first);
+      const pick = el('button', 'add-dashed', '＋ 뉴스에서 직접 골라 넣기');
+      pick.addEventListener('click', () => openPickArticles(tracker));
+      body.appendChild(pick);
       return;
     }
+
+    // A span reads as a period, not a pile: the two ends of the timeline and
+    // how long the issue has been running.
+    const span = el('p', 'set-desc',
+      `${days[order === 'desc' ? days.length - 1 : 0].date}`
+      + ` ~ ${days[order === 'desc' ? 0 : days.length - 1].date}`
+      + ` · ${days.length}일`);
+    body.appendChild(span);
 
     const tl = el('div', 'tl');
     days.forEach((day, i) => {
@@ -1887,6 +2102,105 @@ function openTrackerTimeline(tracker, refreshNotice = '') {
       tl.appendChild(row);
     });
     body.appendChild(tl);
+  });
+}
+
+// The other direction of manual adding. Pinning from the feed means finding
+// the article first; here the issue is already open and the whole feed is
+// searchable from inside it, which is what "add this news by hand" usually
+// means once the keyword rule has missed something.
+function openPickArticles(tracker) {
+  openPanel('뉴스에서 고르기', (body) => {
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', tracker.name));
+    sec.appendChild(el('p', 'choice-hint',
+      '수집된 뉴스에서 직접 골라 타임라인에 넣습니다. 키워드가 놓친 기사를 넣을 때 씁니다.'));
+    body.appendChild(sec);
+
+    const search = el('input', 'in');
+    search.type = 'search';
+    search.placeholder = '제목 검색';
+    body.appendChild(search);
+
+    // seeded with the issue's own keywords: the article that is missing is
+    // usually near the ones that matched, not at the top of the whole feed
+    search.value = (tracker.any[0] || tracker.all[0] || '');
+
+    const count = el('p', 'choice-hint pick-count', '');
+    body.appendChild(count);
+    const list = el('div', 'pick-list');
+    body.appendChild(list);
+
+    const LIMIT = 40;
+
+    const draw = () => {
+      const q = search.value.trim().toLowerCase();
+      const on = new Set(tracker.events.map((e) => e.url));
+      // every collected category, not just the ones the news tab shows: an
+      // article is missing from the timeline precisely because it fell
+      // outside the usual filters, and a hidden category is one of those.
+      const rows = [];
+      for (const cat of newsData.categories) {
+        for (const it of cat.items) {
+          if (isBlocked(it)) continue;
+          if (q && !it.title.toLowerCase().includes(q)) continue;
+          rows.push({ it, cat: cat.name });
+        }
+      }
+      // newest first, and one story that reaches several categories is listed once
+      rows.sort((a, b) => (b.it.pubDate || '').localeCompare(a.it.pubDate || ''));
+      const seenUrl = new Set();
+      const uniq = rows.filter((r) => !seenUrl.has(r.it.link) && seenUrl.add(r.it.link));
+
+      list.textContent = '';
+      count.textContent = uniq.length
+        ? `${uniq.length}건 중 ${Math.min(uniq.length, LIMIT)}건 표시`
+        : '검색 결과가 없습니다.';
+
+      for (const { it, cat } of uniq.slice(0, LIMIT)) {
+        const row = el('div', 'pick-row');
+        const tx = el('div', 'pick-tx');
+        tx.appendChild(el('div', 'pick-title', it.title));
+        tx.appendChild(el('div', 'pick-meta',
+          [dayOf(it.pubDate), it.source, cat].filter(Boolean).join(' · ')));
+        row.appendChild(tx);
+
+        const added = on.has(it.link);
+        const btn = el('button', added ? 'pick-btn on' : 'pick-btn', added ? '✓' : '＋');
+        btn.setAttribute('aria-label', added ? '이미 추가됨' : '타임라인에 추가');
+        btn.addEventListener('click', () => {
+          if (on.has(it.link)) {
+            const ev = tracker.events.find((e) => e.url === it.link);
+            if (ev) removeEvent(tracker, ev);
+            on.delete(it.link);
+            btn.className = 'pick-btn';
+            btn.textContent = '＋';
+          } else {
+            pinToTracker(tracker, it);
+            on.add(it.link);
+            btn.className = 'pick-btn on';
+            btn.textContent = '✓';
+          }
+        });
+        row.appendChild(btn);
+        list.appendChild(row);
+      }
+    };
+
+    let t = null;
+    search.addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(draw, 180);
+    });
+    draw();
+
+    const done = el('button', 'primary', '완료');
+    done.style.width = '100%';
+    done.addEventListener('click', () => {
+      rebuildPages();
+      openTrackerTimeline(tracker);
+    });
+    body.appendChild(done);
   });
 }
 
@@ -2341,8 +2655,10 @@ function buildTrackerPage() {
     more.addEventListener('click', () => {
       const other = tracker.status === 'active' ? 'closed' : 'active';
       openSheet(tracker.name, [
+        { label: '↻ 업데이트', onClick() { openTrackerUpdate(tracker, true); } },
+        { label: '＋ 뉴스에서 골라 추가', onClick() { openPickArticles(tracker); } },
         { label: '✎ 편집', onClick() { openTrackerEditor(tracker); } },
-        { label: '↩ 과거 소급 (GDELT)', onClick() { openBackfill(tracker); } },
+        { label: '⚙ 수집 범위·매체 설정', onClick() { openBackfill(tracker); } },
         {
           label: other === 'closed' ? '■ 종료로 이동' : '▶ 다시 진행중으로',
           onClick() {
@@ -2394,14 +2710,118 @@ function buildTrackerPage() {
   return page;
 }
 
-// Manual pin: keyword rules miss articles whose title words differ, so an
-// article can be dropped into a timeline by hand.
-function addToTrackerSheet(item) {
-  openSheet('이슈에 추가', S.trackers.map((tracker) => ({
-    label: `${tracker.name} (${TRACKER_STATUS[tracker.status]})`,
-    onClick() {
-      if (tracker.events.some((e) => e.url === item.link)) return;
-      tracker.events.push({
+// Start an issue from the article being read: the headline supplies the name,
+// the keywords and the anchor date, so tracking a story is one tap and the
+// user never composes a query. The extracted words are shown for editing
+// before anything is saved, since a headline's nouns are a guess.
+function trackFromArticle(item) {
+  const words = suggestKeywords(item.title);
+  const draft = {
+    id: `t-${Date.now()}`,
+    name: item.title.length > 30 ? `${item.title.slice(0, 30)}…` : item.title,
+    all: [],
+    any: words,
+    kr: words.slice(0, 3).join(' '),
+    status: 'active',
+    events: [],
+    // the article that started the issue is the anchor; the sweep reaches
+    // back from there rather than from today
+    from: dayOf(item.pubDate),
+    seedUrl: item.link,
+    seedDate: dayOf(item.pubDate),
+  };
+
+  openPanel('이슈로 추적', (body) => {
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', '이 기사'));
+    sec.appendChild(el('p', 'choice-hint', `${item.title}${item.source ? ` · ${item.source}` : ''}`));
+    body.appendChild(sec);
+
+    const nsec = el('div', 'set-section');
+    nsec.appendChild(el('div', 'set-title', '이슈 이름'));
+    const nameIn = el('input', 'in');
+    nameIn.value = draft.name;
+    nsec.appendChild(nameIn);
+    body.appendChild(nsec);
+
+    const ksec = el('div', 'set-section');
+    ksec.appendChild(el('div', 'set-title', '추적 키워드'));
+    const box = el('div', 'chipbox');
+    const redraw = () => {
+      box.textContent = '';
+      if (!draft.any.length) {
+        box.appendChild(el('span', 'w-empty', '없음 — 최소 하나는 필요합니다'));
+        return;
+      }
+      draft.any.forEach((w, i) => {
+        const chip = el('span', 'x-chip');
+        chip.appendChild(el('span', null, w));
+        const x = el('button', 'x', '✕');
+        x.setAttribute('aria-label', `${w} 삭제`);
+        x.addEventListener('click', () => { draft.any.splice(i, 1); redraw(); });
+        chip.appendChild(x);
+        box.appendChild(chip);
+      });
+    };
+    redraw();
+    ksec.appendChild(box);
+    ksec.appendChild(el('p', 'choice-hint',
+      '제목에서 뽑은 단어입니다. 하나라도 제목에 있으면 수집합니다. 너무 넓으면 빼고, 빠진 게 있으면 더하세요.'));
+    const form = el('div', 'add-form');
+    const kin = el('input', 'in');
+    kin.placeholder = '키워드 추가';
+    const kadd = el('button', 'primary', '추가');
+    const commit = () => {
+      const v = kin.value.trim();
+      if (!v) return;
+      addUnique(draft.any, v);
+      kin.value = '';
+      redraw();
+    };
+    kadd.addEventListener('click', commit);
+    kin.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
+    form.appendChild(kin);
+    form.appendChild(kadd);
+    ksec.appendChild(form);
+    body.appendChild(ksec);
+
+    const fsec = el('div', 'set-section');
+    fsec.appendChild(el('div', 'set-title', '어디까지 거슬러 갈까요'));
+    const fromIn = el('input', 'in');
+    fromIn.type = 'date';
+    fromIn.value = monthsAgo(6);
+    fsec.appendChild(fromIn);
+    const quick = el('div', 'segrow');
+    const marks = [['3개월', 3], ['6개월', 6], ['1년', 12], ['2년', 24]];
+    const paint = () => {
+      [...quick.children].forEach((b, i) => {
+        b.classList.toggle('on', fromIn.value === monthsAgo(marks[i][1]));
+      });
+    };
+    for (const [label, months] of marks) {
+      const b = el('button', 'seg', label);
+      b.addEventListener('click', () => { fromIn.value = monthsAgo(months); paint(); });
+      quick.appendChild(b);
+    }
+    fromIn.addEventListener('change', paint);
+    paint();
+    fsec.appendChild(quick);
+    fsec.appendChild(el('p', 'choice-hint',
+      '업데이트를 누르면 이 날짜부터 오늘까지의 관련 기사를 모아 날짜순으로 이어붙입니다.'));
+    body.appendChild(fsec);
+
+    const go = el('button', 'primary', '추적 시작하고 업데이트');
+    go.style.width = '100%';
+    go.addEventListener('click', () => {
+      const name = nameIn.value.trim();
+      if (!name) { nameIn.focus(); return; }
+      if (!draft.any.length) { kin.focus(); return; }
+      draft.name = name;
+      draft.from = fromIn.value || monthsAgo(6);
+      draft.kr = draft.any.slice(0, 3).join(' ');
+      // the seed article belongs on the timeline even if the keyword rule
+      // would not have matched its own headline
+      draft.events.push({
         date: dayOf(item.pubDate),
         title: item.title,
         source: item.source || '',
@@ -2409,13 +2829,88 @@ function addToTrackerSheet(item) {
         coverage: item.coverage || 0,
         addedAt: new Date().toISOString(),
       });
-      // pinning by hand overrides an earlier removal
-      if (tracker.dropped) tracker.dropped = tracker.dropped.filter((u) => u !== item.link);
-      sortEvents(tracker);
+      S.trackers.push(draft);
       save();
+      collectTrackers();
+      markTrackerSeen(draft);
       rebuildPages();
-    },
-  })));
+      openTrackerUpdate(draft, true);
+    });
+    body.appendChild(go);
+
+    const later = el('button', 'add-dashed', '나중에 — 추가만 하고 닫기');
+    later.addEventListener('click', () => {
+      const name = nameIn.value.trim();
+      if (!name || !draft.any.length) return;
+      draft.name = name;
+      draft.from = fromIn.value || monthsAgo(6);
+      draft.kr = draft.any.slice(0, 3).join(' ');
+      draft.events.push({
+        date: dayOf(item.pubDate),
+        title: item.title,
+        source: item.source || '',
+        url: item.link,
+        coverage: item.coverage || 0,
+        addedAt: new Date().toISOString(),
+      });
+      S.trackers.push(draft);
+      save();
+      collectTrackers();
+      markTrackerSeen(draft);
+      closeOverlay();
+      rebuildPages();
+    });
+    body.appendChild(later);
+  });
+}
+
+// Manual pin: keyword rules miss articles whose title words differ, so an
+// article can be dropped into a timeline by hand.
+// A hand-pinned article is kept even when it duplicates one already on that
+// day: the user chose this specific piece, so the automatic dedup rule does
+// not get to overrule them. Only the identical url is refused.
+function pinToTracker(tracker, item) {
+  if (tracker.events.some((e) => e.url === item.link)) return false;
+  tracker.events.push({
+    date: dayOf(item.pubDate),
+    title: item.title,
+    source: item.source || '',
+    url: item.link,
+    coverage: item.coverage || 0,
+    manual: true,
+    addedAt: new Date().toISOString(),
+  });
+  // pinning by hand overrides an earlier removal, and must survive the next
+  // sweep — otherwise the dropped list would strip it again
+  if (tracker.dropped) tracker.dropped = tracker.dropped.filter((u) => u !== item.link);
+  if (tracker.skippedUrls) tracker.skippedUrls = tracker.skippedUrls.filter((u) => u !== item.link);
+  sortEvents(tracker);
+  save();
+  return true;
+}
+
+function addToTrackerSheet(item) {
+  const actions = S.trackers.map((tracker) => {
+    const has = tracker.events.some((e) => e.url === item.link);
+    return {
+      label: `${has ? '✓ ' : ''}${tracker.name}`
+        + ` (${TRACKER_STATUS[tracker.status]}${has ? ' · 이미 있음' : ''})`,
+      onClick() {
+        if (has) {
+          openTrackerTimeline(tracker);
+          return;
+        }
+        pinToTracker(tracker, item);
+        rebuildPages();
+        toast(`'${tracker.name}' 에 추가했습니다.`);
+      },
+    };
+  });
+  actions.push({
+    label: '＋ 새 이슈로 추적',
+    onClick() { trackFromArticle(item); },
+  });
+  openSheet('이슈에 추가', actions);
 }
 
 // ---------- scrap (saved articles) ----------
