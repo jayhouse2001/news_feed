@@ -36,60 +36,14 @@ const CATEGORIES = [
 // feeds are fetched alongside and matched to the headlines by title.
 // Measured 2026-08-09: ~1300 images collected, covering ~13% of the feed —
 // most outlets Google aggregates simply do not publish one.
-const IMAGE_FEEDS = [
-  'https://www.yna.co.kr/rss/news.xml',
-  'https://www.yna.co.kr/rss/international.xml',
-  'https://www.yna.co.kr/rss/politics.xml',
-  'https://www.yna.co.kr/rss/economy.xml',
-  'https://www.yna.co.kr/rss/industry.xml',
-  'https://www.yna.co.kr/rss/society.xml',
-  'https://www.yna.co.kr/rss/sports.xml',
-  'https://www.yna.co.kr/rss/culture.xml',
-  'https://www.yna.co.kr/rss/health.xml',
-  'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER',
+// Feeds carried only for their pictures. Every other publisher feed is already
+// fetched for its articles and indexed from the same response — fetching all of
+// them twice is what pushed a run past the Workers subrequest ceiling.
+const IMAGE_ONLY_FEEDS = [
   'https://news.sbs.co.kr/news/newsflashRssFeed.do?plink=RSSREADER',
-  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER',
-  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02&plink=RSSREADER',
-  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=03&plink=RSSREADER',
-  'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=08&plink=RSSREADER',
-  'https://rss.donga.com/total.xml',
-  'https://www.mk.co.kr/rss/30000001/',
-  'https://www.mk.co.kr/rss/50100032/',
   'https://www.mk.co.kr/rss/50200011/',
-  'https://www.asiae.co.kr/rss/all.htm',
-  'https://newsis.com/RSS/health.xml',
-  // English feeds for the intl_* categories; these publish an image on
-  // essentially every item, unlike most of what Google aggregates.
-  'https://feeds.bbci.co.uk/news/rss.xml',
-  'https://feeds.bbci.co.uk/news/world/rss.xml',
-  'https://feeds.bbci.co.uk/news/business/rss.xml',
-  'https://feeds.bbci.co.uk/news/technology/rss.xml',
-  'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml',
-  'https://feeds.bbci.co.uk/news/health/rss.xml',
-  'https://feeds.bbci.co.uk/sport/rss.xml',
-  'https://www.theguardian.com/world/rss',
-  'https://www.theguardian.com/uk/technology/rss',
-  'https://www.theguardian.com/science/rss',
-  'https://www.theguardian.com/uk/sport/rss',
-  'https://www.theguardian.com/uk/culture/rss',
   'https://abcnews.go.com/abcnews/internationalheadlines',
-  'https://feeds.npr.org/1004/rss.xml',
-  'https://variety.com/feed/',
-  'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml',
-  'https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml',
-  'https://feeds.nbcnews.com/nbcnews/public/news',
   'https://feeds.nbcnews.com/nbcnews/public/world',
-  'https://www.independent.co.uk/news/world/rss',
-  'https://phys.org/rss-feed/',
-  'https://www.spacedaily.com/spacedaily.xml',
-  'https://www.theverge.com/rss/index.xml',
-  'https://feeds.arstechnica.com/arstechnica/index',
-  'https://deadline.com/feed/',
 ];
 
 const IMAGE_MATCH_THRESHOLD = 0.55;
@@ -325,41 +279,43 @@ function parsePublisherRss(xml, source) {
   return items;
 }
 
-async function fetchPublisherItems(catId) {
-  const feeds = PUBLISHER_SOURCES.filter((f) => f.cat === catId);
-  if (!feeds.length) return [];
-  const lists = await Promise.all(feeds.map(async (f) => {
+// One request per feed, parsed twice: once for the category's articles and once
+// for the image index. Fetching the same 47 urls again for pictures is what put
+// a run over the Workers subrequest ceiling.
+async function fetchFeedTexts(feeds) {
+  const entries = await Promise.all(feeds.map(async (f) => {
     try {
-      const res = await fetch(f.url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
+      const res = await fetch(f.url, {
+        headers: { 'user-agent': UA },
+        signal: AbortSignal.timeout(15000),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return parsePublisherRss(await res.text(), f.name);
+      return { f, xml: await res.text() };
     } catch (err) {
       console.error(`[pub fail] ${f.name} ${f.url.slice(8, 44)}: ${err.message}`);
-      return [];
+      return null;
     }
   }));
-  return lists.flat();
+  return entries.filter(Boolean);
 }
 
-async function collectImages() {
-  const results = await Promise.all(IMAGE_FEEDS.map(async (url) => {
-    try {
-      const res = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return parseImageFeed(await res.text());
-    } catch (err) {
-      console.error(`[img fail] ${url}: ${err.message}`);
-      return [];
-    }
-  }));
-  const rows = results.flat();
+function feedsForCategory(catId) {
+  return PUBLISHER_SOURCES.filter((f) => f.cat === catId);
+}
+
+// Builds the title -> image lookup from feed bodies already in hand. Nothing is
+// fetched here: the caller passes what it downloaded for the articles.
+export function buildImageIndex(texts) {
+  const rows = [];
+  for (const { xml } of texts) rows.push(...parseImageFeed(xml));
   const exact = new Map();
   for (const r of rows) if (!exact.has(titleKey(r.title))) exact.set(titleKey(r.title), r.img);
-  console.log(`[img] ${rows.length} images from ${IMAGE_FEEDS.length} publisher feeds`);
+  console.log(`[img] ${rows.length} images from ${texts.length} feed bodies`);
   return { exact, tokens: rows.map((r) => ({ tk: tokens(r.title), img: r.img })) };
 }
 
-function findImage(index, title) {
+
+export function findImage(index, title) {
   if (!index) return null;
   const hit = index.exact.get(titleKey(title));
   if (hit) return hit;
@@ -373,11 +329,9 @@ function findImage(index, title) {
   return best >= IMAGE_MATCH_THRESHOLD ? img : null;
 }
 
-async function fetchCategory(cat, now, imageIndex) {
-  // Publisher feeds go first so that when the two sources carry the same
-  // story, the surviving copy is the one with a picture and a direct link.
-  const pub = await fetchPublisherItems(cat.id);
-
+async function fetchCategory(cat, now, imageIndex, pub) {
+  // Publisher items are passed in, already parsed: they come from the same
+  // responses the image index was built from.
   let google = [];
   let error = null;
   try {
@@ -402,17 +356,99 @@ async function fetchCategory(cat, now, imageIndex) {
     + `(pub ${pub.length} + google ${google.length}, ${withImage} with image)`);
   return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
 }
-// Builds the whole payload. The caller stores it: a file under Node, a KV
-// entry in the Worker.
+// A Worker invocation may make at most 50 outbound requests on the free plan,
+// and a full collection wants 65 even after the image feeds stop being fetched
+// twice. So the work is done in slices: the caller runs each slice and merges.
+// Measured: publisher feeds answer in 40ms from the edge, so slicing costs
+// almost nothing in wall time.
+export const SLICE_COUNT = 2;
+
+export function categorySlice(index, count = SLICE_COUNT) {
+  return CATEGORIES.filter((_, i) => i % count === index);
+}
+
+// Collects one slice of categories. Requests made: one Google topic feed plus
+// that slice's publisher feeds — around 33 for half of them.
+export async function collectSlice(index, count = SLICE_COUNT, sharedIndex = null) {
+  const cats = categorySlice(index, count);
+  const feeds = [];
+  const seen = new Set();
+  // The picture-only feeds ride along with the first slice: they carry no
+  // articles for any category, but their images match articles from elsewhere.
+  if (index === 0) {
+    for (const url of IMAGE_ONLY_FEEDS) {
+      seen.add(url);
+      feeds.push({ url, name: '', cat: null });
+    }
+  }
+  for (const cat of cats) {
+    for (const f of feedsForCategory(cat.id)) {
+      // one url can serve several categories; fetch it once
+      if (seen.has(f.url)) continue;
+      seen.add(f.url);
+      feeds.push(f);
+    }
+  }
+  const texts = await fetchFeedTexts(feeds);
+  // A shared index is passed in when the caller collects every slice, so a
+  // picture found in one slice can still be matched to an article in another.
+  const imageIndex = sharedIndex || buildImageIndex(texts);
+
+  // group the parsed items by the category each feed belongs to
+  const byCat = new Map();
+  for (const { f, xml } of texts) {
+    const items = parsePublisherRss(xml, f.name);
+    for (const cat of cats) {
+      if (!feedsForCategory(cat.id).some((x) => x.url === f.url)) continue;
+      if (!byCat.has(cat.id)) byCat.set(cat.id, []);
+      byCat.get(cat.id).push(...items);
+    }
+  }
+
+  const now = Date.now();
+  const categories = await Promise.all(
+    cats.map((c) => fetchCategory(c, now, imageIndex, byCat.get(c.id) || []))
+  );
+  return { categories, texts };
+}
+
+// Builds the whole payload in slices. The caller stores it: a file under Node,
+// a KV entry in the Worker.
 export async function collectNews() {
   const now = Date.now();
-  const imageIndex = await collectImages();
-  const categories = await Promise.all(CATEGORIES.map((c) => fetchCategory(c, now, imageIndex)));
-  const okCount = categories.filter((c) => !c.error).length;
+  const all = [];
+  const pooled = [];
+  // First pass gathers the feed bodies from every slice; the second scores each
+  // category against the pooled image index. Splitting it this way keeps each
+  // slice inside the subrequest ceiling without narrowing the picture pool.
+  const slices = [];
+  for (let i = 0; i < SLICE_COUNT; i++) {
+    const r = await collectSlice(i);
+    slices.push(r);
+    pooled.push(...r.texts);
+  }
+  const imageIndex = buildImageIndex(pooled);
+  for (const r of slices) {
+    for (const cat of r.categories) {
+      if (cat.error || !cat.items.length) { all.push(cat); continue; }
+      // only the picture is revisited; ranking and dedup already happened
+      for (const it of cat.items) {
+        if (!it.image) {
+          const img = findImage(imageIndex, it.title);
+          if (img) it.image = img;
+        }
+      }
+      all.push(cat);
+    }
+  }
+  // put the categories back in their declared order
+  const order = new Map(CATEGORIES.map((c, i) => [c.id, i]));
+  all.sort((a, b) => order.get(a.id) - order.get(b.id));
+  const okCount = all.filter((c) => !c.error).length;
   if (okCount === 0) throw new Error('all categories failed');
   return {
-    data: { updatedAt: new Date(now).toISOString(), categories },
+    data: { updatedAt: new Date(now).toISOString(), categories: all },
     okCount,
-    total: categories.length,
+    total: all.length,
   };
 }
