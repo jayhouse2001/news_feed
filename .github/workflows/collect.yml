@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare
 
 # Collection moved to the Cloudflare cron Worker, which writes the feed to KV
 # and sweeps the trackers on the same schedule. GitHub is the source of truth
@@ -46,3 +46,13 @@ jobs:
             --project-name=news-feeder \
             --branch=master \
             --commit-dirty=true
+
+      # The cron Worker ships from here too, so its schedule and the code it
+      # runs cannot drift apart across a push. Needs Workers Scripts:Edit on the
+      # token; without that permission the Pages deploy above still succeeded,
+      # which is why a failure here does not fail the run.
+      - name: Deploy the cron Worker
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
+        working-directory: worker
+        run: npx --yes wrangler@4 deploy
