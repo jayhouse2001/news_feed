@@ -102,6 +102,10 @@ Cloudflare 대시보드 → Workers & Pages → `news-feeder` → Settings → B
 
 2026-08-19 부터 뉴스 수집도 여기서 한다(예전에는 GitHub Actions). 실측 2.5초로 Workers cron 30초 제한에 여유가 있다.
 
+**푸시하면 GitHub Actions 가 자동 배포한다** (2026-08-19 부터). 토큰에 Workers Scripts:Edit 권한이 있어야 하고, 없으면 이 단계만 실패하고 Pages 배포는 그대로 성공한다.
+
+수동으로 배포할 때:
+
 ```bash
 cd worker
 npx wrangler deploy

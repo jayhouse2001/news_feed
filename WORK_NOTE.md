@@ -644,3 +644,19 @@ Pages Functions 는 cron 을 못 걸어서 수집 Worker 를 분리했다. 같�
 - 앱 **7 PASS**: `/api/news` 없는 환경에서 파일 fallback 으로 정상 동작.
 
 **미결**: Cron Worker 미배포. KV 생성 + Pages 에 `NEWS` 바인딩이 필요하다(`SERVER.md` 4절). 배포해도 **트래커 수집은 여전히 0건** — Google 이 Cloudflare IP 를 막는다. 뉴스 수집은 언론사 RSS 라 영향 없다.
+
+### 2026-08-19 (7) — Cron Worker 배포 + KV 연결
+
+**배포를 Actions 로 옮겼다.** 처음엔 주인님이 터미널에서 `wrangler deploy` 를 쳐야 하는 구조였는데, Worker 는 스케줄과 수집 코드를 함께 갖고 있고 앱은 그 결과를 읽는다. 따로 배포하면 푸시 한 번에 한쪽만 움직일 수 있고, 증상은 "피드가 조용히 멈춘다"뿐이라 알아채기 어렵다. → 같은 워크플로에서 Pages 와 Worker 를 함께 배포한다.
+
+기존 `CLOUDFLARE_API_TOKEN` 에 Workers 권한이 있어서 그대로 됐다(확인: `/run` 이 403 응답 = 가드 작동 = 배포됨). 권한이 없는 경우를 대비해 `continue-on-error` 를 걸었다 — Pages 배포는 어차피 성공하므로 Worker 실패가 전체를 막을 이유가 없다.
+
+**바인딩 상태 추적**: `X-News-Source` 헤더로 어느 경로인지 알 수 있게 해둔 것이 설정 과정에서 그대로 진단 도구가 됐다.
+```
+file (no-binding) → KV 바인딩 없음
+file (kv-empty)   → 바인딩 됐고 cron 이 아직 안 돎
+kv                → 정상
+```
+대시보드에서 바인딩을 추가해도 **이미 존재하는 배포에는 적용되지 않는다** — 빈 커밋을 푸시해 재배포해야 반영된다. D1 때도 같은 함정이 있었다.
+
+**KV 네임스페이스**: `3ac943558c2a438b8834e949a26ebc07`. Pages 와 Worker 양쪽이 `NEWS` 라는 같은 이름으로 바인딩한다(Worker 가 쓰고 `/api/news` 가 읽는다).
