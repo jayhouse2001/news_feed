@@ -525,3 +525,14 @@ CNN 은 https 로 접속되지 않아 제외(http 이미지는 https 페이지�
 - 검색 별도 검증: 한글/영문 대소문자 무시, 결과 전건이 검색어 포함, 차단 매체 제외, 없는 단어는 안내 문구.
 - 회귀 없음: 기존 단위 30 PASS, 배선 8 PASS.
 - `--fg`/`--card` 로 잘못 쓴 CSS 변수를 실제 이름 `--ink`/`--surface` 로 교정(그대로 뒀으면 토스트·피커가 무색으로 렌더).
+
+### 2026-08-19 (3) — 호스팅을 Cloudflare 하나로, 검색 노출 차단
+
+같은 앱이 `news-feeder.pages.dev` 와 `jayhouse2001.github.io/news_feed/` **두 주소로 동시에** 열려 있었다. Cloudflare 로 옮긴 뒤에도 워크플로가 GitHub Pages 에 계속 배포하고 있었기 때문. 방치하면 옛 주소로 들어온 사람이 다른 버전을 보게 되고, 나중에 API 를 붙일 때 origin 이 둘이라 CORS·인증이 복잡해진다.
+
+- 워크플로에서 `configure-pages`/`upload-pages-artifact`/`deploy-pages` 3단계와 `pages: write`·`id-token: write` 권한, `github-pages` environment 를 제거. Cloudflare 배포만 남겼다.
+- Cloudflare 단계의 `continue-on-error: true` 도 뺐다. **이제 유일한 호스트**라 배포 실패가 조용히 통과하면 안 된다(GitHub Pages 가 살아있을 때는 보조 수단이라 무시해도 됐다).
+- `concurrency.group` 을 `pages` → `deploy` 로. Pages 를 안 쓰니 이름이 맞지 않는다.
+- **GitHub 저장소 설정의 Pages 를 Off 로 바꾸는 것은 웹에서 직접 해야 한다** — 워크플로를 지워도 이미 배포된 사이트는 그대로 서비스된다.
+
+**검색 노출**: `site/robots.txt`(`Disallow: /`) + `index.html` 에 `<meta name="robots" content="noindex, nofollow">`. robots.txt 는 크롤러에 대한 *요청*이라 주소를 아는 사람은 그대로 들어온다 — 검색으로 *발견*되는 것만 막는다. meta 태그를 같이 넣은 것은 robots.txt 가 색인을 항상 막지는 못하기 때문(다른 곳에 링크가 걸리면 주소만 색인될 수 있다).
