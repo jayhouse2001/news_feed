@@ -1,28 +1,46 @@
-// Temporary: the cron reports "all categories failed" while the same collector
-// succeeds from a desktop in 2.5s. This reports what the edge can actually
-// reach, per source type, so the failure can be attributed rather than guessed.
-export async function onRequestGet() {
+// Narrowing "all categories failed": individual publisher feeds are reachable
+// from the edge, so the suspect is fan-out. A Worker caps simultaneous outbound
+// connections (6), and the collector opens 51 image feeds at once before any
+// category runs, then 47 publisher feeds and 18 Google topics.
+export async function onRequestGet({ request }) {
+  const n = Number(new URL(request.url).searchParams.get('n') || 12);
   const UA = 'Mozilla/5.0 (compatible; news-feed-collector/1.0)';
-  const targets = [
-    ['google topic', 'https://news.google.com/rss/headlines/section/topic/WORLD?hl=ko&gl=KR&ceid=KR:ko'],
-    ['yna (publisher)', 'https://www.yna.co.kr/rss/news.xml'],
-    ['ytn (publisher)', 'https://www.ytn.co.kr/nmb/rss/ytn_news.xml'],
-    ['khan (publisher)', 'https://www.khan.co.kr/rss/rssdata/total_news.xml'],
-    ['bbc (publisher)', 'https://feeds.bbci.co.uk/news/world/rss.xml'],
+  const feeds = [
+    'https://www.yna.co.kr/rss/news.xml',
+    'https://www.khan.co.kr/rss/rssdata/total_news.xml',
+    'https://feeds.bbci.co.uk/news/world/rss.xml',
+    'https://www.hani.co.kr/rss/',
+    'https://rss.nocutnews.co.kr/nocutnews.xml',
+    'https://www.mk.co.kr/rss/30000001/',
+    'https://www.hankyung.com/feed/all-news',
+    'https://www.sedaily.com/RSS/S1N1.xml',
+    'https://www.newsis.com/RSS/politics.xml',
+    'https://www.kmib.co.kr/rss/data/kmibRssAll.xml',
+    'https://www.seoul.co.kr/xml/rss/rss_politics.xml',
+    'https://www.segye.com/Articles/RSSList/segye_recent.xml',
   ];
-  const out = [];
-  for (const [label, url] of targets) {
-    const t0 = Date.now();
+  const targets = [];
+  for (let i = 0; i < n; i++) targets.push(feeds[i % feeds.length]);
+
+  const t0 = Date.now();
+  const results = await Promise.all(targets.map(async (url, i) => {
     try {
-      const res = await fetch(url, { headers: { 'user-agent': UA } });
+      const res = await fetch(url, {
+        headers: { 'user-agent': UA },
+        signal: AbortSignal.timeout(15000),
+      });
       const body = await res.text();
-      out.push({ label, status: res.status, ms: Date.now() - t0,
-                 bytes: body.length, items: (body.match(/<item>/g) || []).length });
+      return { i, status: res.status, items: (body.match(/<item>/g) || []).length };
     } catch (e) {
-      out.push({ label, error: `${e.name}: ${e.message}`, ms: Date.now() - t0 });
+      return { i, error: `${e.name}: ${e.message}` };
     }
-  }
-  return new Response(JSON.stringify(out, null, 2), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  }));
+  const failed = results.filter((r) => r.error);
+  return new Response(JSON.stringify({
+    requested: n,
+    ms: Date.now() - t0,
+    ok: results.length - failed.length,
+    failed: failed.length,
+    errors: [...new Set(failed.map((f) => f.error))].slice(0, 5),
+  }, null, 2), { headers: { 'Content-Type': 'application/json' } });
 }
