@@ -1,8 +1,14 @@
-name: Collect news and deploy
+name: Deploy to Cloudflare Pages
+
+# Collection moved to the Cloudflare cron Worker, which writes the feed to KV
+# and sweeps the trackers on the same schedule. GitHub is the source of truth
+# for code and nothing else, so this runs on a push rather than on a clock.
+#
+# The collector still runs once here: site/data/news.json ships in the deploy as
+# the fallback the app reads before the Worker's first run of a new deployment,
+# and if KV is ever unreachable. It is not the live feed.
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
   push:
     branches: [master]
   workflow_dispatch:
@@ -15,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-deploy:
+  deploy:
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -27,13 +33,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Fetch news feeds
+      # A stale fallback is better than none, so a failure here does not block
+      # the deploy — the Worker supplies the live feed either way.
+      - name: Build the fallback feed
+        continue-on-error: true
         run: node scripts/fetch-news.mjs
 
-      # The collected news.json is never committed, so pushing to master cannot
-      # carry it to Cloudflare — the built directory is uploaded directly.
-      # Cloudflare is the only host now: the GitHub Pages deploy was removed so
-      # one stale copy of the app cannot keep serving from a second origin.
       - name: Deploy to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != ''
         run: |

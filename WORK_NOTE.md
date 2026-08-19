@@ -618,3 +618,29 @@ Pages Functions 는 cron 을 못 걸어서 수집 Worker 를 분리했다. 같�
 - 회귀 **12 PASS**: 등록 → 저장 → 수집 → 타임라인 → 이슈 편집기(기존 AND/OR 칩 UI 그대로).
 - 기존 단위 **30 PASS** 유지.
 - 후보가 하나도 안 나오는 제목: 2016건 중 **5건(0.2%)**.
+
+### 2026-08-19 (6) — 뉴스 수집을 Cloudflare 로 이전
+
+**요청**: 소스 제외하고 다 Cloudflare 로.
+
+**왜 옮기나**: 수집기가 GitHub Actions 와 Cloudflare cron 두 곳으로 갈라질 상황이었다(트래커 수집은 Cloudflare 로 만들어 둔 상태). 같은 주기에 같은 종류의 일을 하는 것이 두 군데 있을 이유가 없다. GitHub 무료 cron 은 **정시에 안 돈다**(5~15분 지연, 심하면 건너뜀)는 것도 있다.
+
+**구조 변경**
+- `shared/collect-news.js` — 수집 로직을 런타임 중립 모듈로 분리. `fetch` 와 문자열 처리만 쓴다.
+- `scripts/fetch-news.mjs` — 이제 그 모듈을 불러 파일로 쓰는 **얇은 래퍼**(20줄). Node 전용 코드는 원래 파일 쓰기 4줄뿐이었다.
+- `worker/cron.js` — 30분마다 **뉴스 + 트래커 둘 다**. `Promise.allSettled` 로 묶어 한쪽 실패가 다른 쪽을 죽이지 않게 했다(뉴스는 모든 독자가 의존하므로 트래커 오류에 끌려 내려가면 안 된다).
+- `functions/api/news.js` — KV 에서 읽어 서빙. 5분 캐시.
+- `site/data/news.json` — **여전히 배포에 포함**한다. 새 배포 직후 cron 이 아직 안 돌았거나 KV 가 안 붙은 상태에서 앱이 비어 보이면 안 된다. `loadNews()` 가 `api/news` → 실패하면 파일 순으로 시도한다.
+
+**KV 를 쓴 이유**: 뉴스는 950KB 짜리 덩어리를 페이지 로드마다 통째로 읽는다. D1 은 조건으로 골라 읽는 DB 라 이 용도엔 무료 읽기 한도만 더 태운다.
+
+**Actions 는 배포 전용으로 남긴다**: cron 제거, 푸시 때만 실행. fallback `news.json` 을 만들고 Cloudflare 로 업로드한다. 수집 실패는 `continue-on-error` — 오래된 fallback 이 없는 fallback 보다 낫고, 실제 피드는 Worker 가 공급한다.
+
+**⚠ HTTP 헤더에 한글을 넣으면 던진다.** `X-News-Source: 'KV 비어있음'` 으로 썼다가 `Response` 생성 시점에 `TypeError: Cannot convert argument to a ByteString` 이 났다. 헤더 값은 Latin-1 이다. `kv-empty` 같은 ascii 로 바꿨다. **테스트로 잡았지만 배포하면 그대로 터졌을 자리.**
+
+**검증**
+- 분리 전후 산출물 동일: 카테고리 18, 필드 구조 동일, 기사 2016 → 2033(그 사이 갱신분).
+- Worker **28 PASS**: 비밀키 가드(4가지), 실제 피드 수집 → KV 저장(2031건·953KB·**2.5초**, cron 제한 30초), 18개 카테고리·사진 1378건 보존, 메타데이터, `/api/news` 서빙, KV 미연결/빈 KV/오류 3가지 fallback, 트래커 수집 동시 실행, 만료 토큰·세션 정리, **한쪽 실패 격리**.
+- 앱 **7 PASS**: `/api/news` 없는 환경에서 파일 fallback 으로 정상 동작.
+
+**미결**: Cron Worker 미배포. KV 생성 + Pages 에 `NEWS` 바인딩이 필요하다(`SERVER.md` 4절). 배포해도 **트래커 수집은 여전히 0건** — Google 이 Cloudflare IP 를 막는다. 뉴스 수집은 언론사 RSS 라 영향 없다.

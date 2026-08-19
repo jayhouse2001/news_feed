@@ -4163,7 +4163,16 @@ function showUpdatedAt() {
     newsData.updatedAt ? relTime(newsData.updatedAt) : '';
 }
 
+// The API serves whatever the last cron run collected; the file in the deploy
+// is what answers before the first run, and if the API is not there at all the
+// app falls back to it directly so an install without a Worker still works.
 async function loadNews() {
+  try {
+    const res = await fetch(`api/news?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) return await res.json();
+  } catch {
+    // fall through to the file
+  }
   const res = await fetch(`data/news.json?t=${Date.now()}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();

@@ -1,17 +1,40 @@
 // The scheduled half of the app. Pages Functions answer requests but cannot
-// hold a cron trigger, so collection lives in this Worker; it binds the same
-// D1 database the API writes to.
+// hold a cron trigger, so everything periodic lives here: the news collection
+// that used to run in GitHub Actions, and the per-issue tracker sweeps.
+//
+// Both are in one Worker because they share a cadence and a failure mode — if
+// the edge cannot reach a feed, neither job can — and because splitting them
+// would mean two deploys to keep in step.
 
+import { collectNews } from '../shared/collect-news.js';
 import { rowToTracker } from '../functions/_lib/tracker.js';
 import { sweepTracker } from '../functions/_lib/sweep.js';
 
-// Issues are swept oldest-first by last sweep time, so a run that hits the
-// ceiling leaves the freshest ones for next time rather than always starving
-// the same tail of the list.
+export const NEWS_KEY = 'news:latest';
+
+// Issues are swept oldest-sweep-first, so a run that hits the ceiling leaves
+// the freshest for next time instead of starving the same tail every time.
 const MAX_TRACKERS_PER_RUN = 40;
 
-// Sessions and login tokens are the only rows that expire on a clock; nothing
-// reads them once past, and D1's free tier is measured in rows.
+async function collectAndStore(env) {
+  const started = Date.now();
+  const { data, okCount, total } = await collectNews();
+  const body = JSON.stringify(data);
+  // KV, not D1: this is one blob read whole on every page load, which is what
+  // KV is for. A row store would charge per row to answer the same question.
+  await env.NEWS.put(NEWS_KEY, body, {
+    metadata: { updatedAt: data.updatedAt, categories: okCount },
+  });
+  return {
+    categories: `${okCount}/${total}`,
+    items: data.categories.reduce((n, c) => n + c.items.length, 0),
+    bytes: body.length,
+    ms: Date.now() - started,
+  };
+}
+
+// Sessions and login tokens are the only rows that expire on a clock, and
+// nothing reads them once past.
 async function purgeExpired(env) {
   const now = new Date().toISOString();
   await env.DB.batch([
@@ -20,27 +43,7 @@ async function purgeExpired(env) {
   ]);
 }
 
-export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(run(env));
-  },
-
-  // Same work, reachable by hand. Guarded by a secret so the endpoint cannot
-  // be used to burn through the Google News rate limit from outside.
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname !== '/run') return new Response('not found', { status: 404 });
-    if (!env.CRON_SECRET || url.searchParams.get('key') !== env.CRON_SECRET) {
-      return new Response('forbidden', { status: 403 });
-    }
-    const summary = await run(env);
-    return new Response(JSON.stringify(summary, null, 2), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  },
-};
-
-async function run(env) {
+async function sweepTrackers(env) {
   const started = Date.now();
   await purgeExpired(env);
 
@@ -53,26 +56,55 @@ async function run(env) {
 
   let added = 0;
   let failed = 0;
-  const details = [];
-
   for (const row of results) {
     try {
       const r = await sweepTracker(env, rowToTracker(row));
       added += r.added || 0;
-      details.push({ id: row.id, name: row.name, ...r });
     } catch (e) {
       failed++;
       console.error('sweep failed', row.id, e.message);
-      details.push({ id: row.id, name: row.name, error: e.message });
     }
   }
+  return { trackers: results.length, added, failed, ms: Date.now() - started };
+}
 
+async function run(env) {
+  // News is the job every reader depends on, so a tracker failure must not
+  // take it down, or vice versa. They are reported together and settled apart.
+  const [news, trackers] = await Promise.allSettled([
+    collectAndStore(env),
+    sweepTrackers(env),
+  ]);
   const summary = {
-    trackers: results.length,
-    added,
-    failed,
-    ms: Date.now() - started,
+    news: news.status === 'fulfilled' ? news.value : { error: news.reason.message },
+    trackers: trackers.status === 'fulfilled' ? trackers.value
+      : { error: trackers.reason.message },
   };
   console.log('cron', JSON.stringify(summary));
-  return { ...summary, details };
+  return summary;
 }
+
+export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(run(env));
+  },
+
+  // The same work, reachable by hand for a first fill or a check. Guarded by a
+  // secret: without one this would let anyone spend the Worker's request
+  // budget and hammer the upstream feeds.
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname !== '/run') return new Response('not found', { status: 404 });
+    if (!env.CRON_SECRET || url.searchParams.get('key') !== env.CRON_SECRET) {
+      return new Response('forbidden', { status: 403 });
+    }
+    const only = url.searchParams.get('only');
+    let summary;
+    if (only === 'news') summary = { news: await collectAndStore(env) };
+    else if (only === 'trackers') summary = { trackers: await sweepTrackers(env) };
+    else summary = await run(env);
+    return new Response(JSON.stringify(summary, null, 2), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+};

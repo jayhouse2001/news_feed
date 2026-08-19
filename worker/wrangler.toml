@@ -2,14 +2,18 @@ name = "news-feeder-cron"
 main = "cron.js"
 compatibility_date = "2026-08-01"
 
-# Every half hour, matching what the news collector already runs at. A tracker
-# is only as current as its last sweep, so the two cadences should agree.
+# Every half hour, the cadence the feed collection has always run at.
 [triggers]
 crons = ["*/30 * * * *"]
 
-# Same database the Pages Functions bind as DB. The id is filled in after
-# `wrangler d1 create news-feeder` — see SERVER.md.
+# Same database the Pages Functions bind as DB.
 [[d1_databases]]
 binding = "DB"
 database_name = "news-feeder"
 database_id = "f40060f0-afd0-42f3-86f6-86198e1522bd"
+
+# Holds the collected feed as one blob. Filled in after
+# `wrangler kv namespace create NEWS` — see SERVER.md.
+[[kv_namespaces]]
+binding = "NEWS"
+id = "REPLACE_WITH_KV_ID"

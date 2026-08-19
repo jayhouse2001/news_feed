@@ -8,13 +8,14 @@
 
 ## 왜 Cloudflare 인가
 
-뉴스는 모두에게 같은 파일 하나라 정적 배포로 충분하지만, 트래커는 사람마다 다르고
-쓰기가 필요하다. GitHub Actions 는 30분마다 잠깐 켜졌다 꺼지는 것이라 사용자 요청을
-받을 수 없어서, 항상 켜져 있는 쪽(Cloudflare)이 DB·로그인·수집을 맡는다.
+트래커는 사람마다 다르고 쓰기가 필요하다. GitHub Actions 는 30분마다 잠깐 켜졌다
+꺼지는 것이라 사용자 요청을 받을 수 없어서, 항상 켜져 있는 쪽(Cloudflare)이 DB·로그인을
+맡는다. 뉴스 수집도 같은 cron Worker 로 옮겼다 — 수집기가 두 곳으로 갈라져 있을 이유가
+없고, 옮기면 GitHub cron 의 지연(무료 계정은 5~15분 밀린다)도 없어진다.
 
 ```
-GitHub          소스 저장소
-Cloudflare      Pages(앱) + Functions(API) + D1(DB) + Worker(30분 수집)
+GitHub          소스 저장소 + 배포 트리거 (푸시할 때만)
+Cloudflare      Pages(앱) + Functions(API) + D1(계정·이슈) + KV(뉴스) + Worker(30분 수집)
 Resend          로그인 메일 발송
 ```
 
@@ -78,9 +79,28 @@ Pages → **Settings** → **Variables and Secrets** 에 추가:
 
 ---
 
-## 4. 수집 Worker
+## 4. KV (수집한 뉴스 저장소)
 
-30분마다 트래커를 수집하는 별도 Worker. Pages Functions 는 cron 을 걸 수 없어서 분리돼 있다.
+뉴스는 통째로 읽고 쓰는 한 덩어리라 D1 이 아니라 KV 에 둔다. 행 단위로 질의할 일이 없다.
+
+```bash
+npx wrangler kv namespace create NEWS
+```
+
+출력의 `id` 를 `worker/wrangler.toml` 의 `REPLACE_WITH_KV_ID` 에 넣는다.
+
+**Pages 에도 같은 KV 를 연결한다** (`/api/news` 가 읽는다):
+
+Cloudflare 대시보드 → Workers & Pages → `news-feeder` → Settings → Bindings
+- **KV namespace binding** 추가
+- Variable name: `NEWS`
+- KV namespace: 위에서 만든 것
+
+## 5. 수집 Worker
+
+30분마다 **뉴스와 트래커를 모두** 수집하는 Worker. Pages Functions 는 cron 을 걸 수 없어서 분리돼 있다.
+
+2026-08-19 부터 뉴스 수집도 여기서 한다(예전에는 GitHub Actions). 실측 2.5초로 Workers cron 30초 제한에 여유가 있다.
 
 ```bash
 cd worker
@@ -97,13 +117,19 @@ npx wrangler secret put CRON_SECRET
 
 ```
 https://news-feeder-cron.<계정>.workers.dev/run?key=<CRON_SECRET>
+
+# 한쪽만 돌리기
+.../run?key=<KEY>&only=news
+.../run?key=<KEY>&only=trackers
 ```
+
+**첫 배포 후 한 번 실행해 KV 를 채운다.** 그 전까지는 배포에 포함된 `site/data/news.json` 이 대신 응답한다.
 
 키가 틀리면 403. 이게 없으면 아무나 호출해 Google 뉴스 요청 한도를 태울 수 있다.
 
 ---
 
-## 5. 확인
+## 6. 확인
 
 ```bash
 # 로그인 안 된 상태
