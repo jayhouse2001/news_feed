@@ -96,10 +96,21 @@ export class HttpError extends Error {
 // anything else becomes a 500 without leaking a stack trace to the client.
 export function handler(fn) {
   return async (ctx) => {
+    // A missing D1 binding is the one failure that is certain to happen at
+    // least once — the API deploys with the code, but the binding is added by
+    // hand afterwards. Saying so beats a generic 500 the reader cannot act on.
+    if (!ctx.env || !ctx.env.DB) {
+      return err('데이터베이스가 연결되지 않았습니다. Cloudflare 설정에서 D1 바인딩(DB)을 추가해 주세요.', 503);
+    }
     try {
       return await fn(ctx);
     } catch (e) {
       if (e instanceof HttpError) return err(e.message, e.status);
+      // A binding that exists but has no tables fails the same way for the
+      // same reason: setup is unfinished, not broken.
+      if (/no such table/i.test(e.message || '')) {
+        return err('데이터베이스에 테이블이 없습니다. migrations/0001_init.sql 을 적용해 주세요.', 503);
+      }
       console.error(e);
       return err('서버 오류가 발생했습니다.', 500);
     }
