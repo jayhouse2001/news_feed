@@ -484,7 +484,7 @@ function openItemSheet(item) {
     label: '◷ 이 뉴스를 이슈로 추적',
     onClick() { trackFromArticle(item); },
   });
-  if (S.trackers.length) {
+  if (trackerList().length) {
     actions.push({
       label: '＋ 기존 이슈에 추가…',
       onClick() { addToTrackerSheet(item); },
@@ -837,7 +837,7 @@ function configureImportant(widget) {
 }
 
 function renderTrackerWidget(card) {
-  const active = S.trackers.filter((t) => t.status === 'active');
+  const active = trackerList().filter((t) => t.status === 'active');
   if (!active.length) {
     card.appendChild(el('p', 'w-empty', "추적 중인 이슈가 없습니다. '트래커' 탭에서 추가하세요."));
     return;
@@ -852,9 +852,9 @@ function renderTrackerWidget(card) {
     li.appendChild(top);
 
     const meta = el('div', 'meta');
-    const fresh = newEventCount(tracker);
+    const fresh = tracker.counts ? tracker.counts.unseen : newEventCount(tracker);
     if (fresh) meta.appendChild(el('span', 'badge', `새 ${fresh}건`));
-    const latest = tracker.events[0];
+    const latest = (tracker.events || [])[0];
     meta.appendChild(el('span', null, latest
       ? `${latest.date} · ${latest.title}`.slice(0, 60)
       : '모인 기사 없음'));
@@ -1142,8 +1142,19 @@ function newEventCount(tracker) {
   return tracker.events.filter((e) => !e.note && (e.addedAt || '') > seenAt).length;
 }
 
+function isRemote(tracker) {
+  return serverBacked() && remoteTrackers.some((t) => t.id === tracker.id);
+}
+
 function markTrackerSeen(tracker) {
   tracker.seenAt = new Date().toISOString();
+  if (isRemote(tracker)) {
+    // fire and forget: a lost "seen" only costs an unread badge
+    api(`/trackers/${tracker.id}`, { method: 'PATCH', body: JSON.stringify({ seen: true }) })
+      .catch(() => {});
+    if (tracker.counts) tracker.counts.unseen = 0;
+    return;
+  }
   save();
 }
 
@@ -1595,6 +1606,15 @@ function backfillQuery(tracker) {
 // should not have to know that recent news and old news arrive by different
 // routes.
 async function runUpdate(tracker, onProgress) {
+  // A server tracker is swept by the server; the browser only asks and waits.
+  // This is the path that no longer needs a CORS relay.
+  if (isRemote(tracker)) {
+    onProgress('서버에서 기사를 모으는 중…');
+    const r = await api(`/trackers/${tracker.id}/update`, { method: 'POST', body: '{}' });
+    const full = await pullTimeline(tracker);
+    Object.assign(tracker, full);
+    return { server: true, sweep: r.result, fromFeed: 0, feedOk: true, sweepError: null };
+  }
   onProgress('최신 뉴스 확인 중…');
   const before = tracker.events.length;
   let feedOk = true;
@@ -1618,6 +1638,17 @@ async function runUpdate(tracker, onProgress) {
 }
 
 function updateSummary(r) {
+  if (r.server) {
+    const w = r.sweep || {};
+    if (w.upToDate) {
+      return '이미 다 모았습니다. 더 과거를 보려면 시작일을 앞당기세요.';
+    }
+    const out = [w.added ? `기사 ${w.added}건을 추가했습니다.` : '새로 추가된 기사가 없습니다.'];
+    if (w.capped) out.push(`중복·하루 상한으로 ${w.capped}건 제외.`);
+    if (w.complete === false) out.push('남은 구간은 다음 자동 수집 때 이어서 채웁니다.');
+    if (w.failed) out.push(`${w.failed}개 구간을 받지 못했습니다.`);
+    return out.join(' ');
+  }
   const parts = [];
   const swept = r.sweep && !r.sweep.upToDate ? r.sweep.added : 0;
   const total = r.fromFeed + swept;
@@ -1946,6 +1977,30 @@ function openTrackerEditor(tracker) {
       draft.kr = krIn.value.trim();
       draft.en = enIn.value.trim();
       draft.from = fromIn.value || monthsAgo(6);
+
+      // Signed in, every issue is a server issue — including new ones, so a
+      // user who has an account never accumulates a second local set.
+      if (serverBacked()) {
+        const payload = {
+          name: draft.name, all: draft.all, any: draft.any, kr: draft.kr,
+          en: draft.en, from: draft.from, status: draft.status,
+          perDay: draft.perDay, allSources: draft.allSources, order: draft.order,
+        };
+        saveBtn.disabled = true;
+        const done = () => pullTrackers().then(() => {
+          closeOverlay();
+          rebuildPages();
+        }).catch(() => { saveBtn.disabled = false; });
+        if (editing && isRemote(tracker)) {
+          api(`/trackers/${tracker.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+            .then(done).catch((err) => { saveBtn.disabled = false; toast(err.message); });
+        } else {
+          api('/trackers', { method: 'POST', body: JSON.stringify(payload) })
+            .then(done).catch((err) => { saveBtn.disabled = false; toast(err.message); });
+        }
+        return;
+      }
+
       if (editing) {
         const i = S.trackers.findIndex((t) => t.id === tracker.id);
         if (i >= 0) S.trackers[i] = draft;
@@ -1964,6 +2019,19 @@ function openTrackerEditor(tracker) {
 }
 
 function openTrackerTimeline(tracker, refreshNotice = '') {
+  // Server trackers arrive from the list without their events; fetch them on
+  // first open, then re-enter with the full object.
+  if (tracker._partial) {
+    openPanel(tracker.name, (body) => {
+      body.appendChild(el('p', 'placeholder', '불러오는 중…'));
+    });
+    pullTimeline(tracker)
+      .then((full) => openTrackerTimeline(full, refreshNotice))
+      .catch((err) => openPanel(tracker.name, (body) => {
+        body.appendChild(el('p', 'placeholder', `불러오지 못했습니다: ${err.message}`));
+      }));
+    return;
+  }
   markTrackerSeen(tracker);
   openPanel(tracker.name, (body) => {
     const order = tracker.order || 'desc';
@@ -1978,7 +2046,13 @@ function openTrackerTimeline(tracker, refreshNotice = '') {
       order === 'desc' ? '↓ 최신순' : '↑ 오래된순');
     sortBtn.addEventListener('click', () => {
       tracker.order = order === 'desc' ? 'asc' : 'desc';
-      save();
+      if (isRemote(tracker)) {
+        api(`/trackers/${tracker.id}`, {
+          method: 'PATCH', body: JSON.stringify({ order: tracker.order }),
+        }).catch(() => {});
+      } else {
+        save();
+      }
       openTrackerTimeline(tracker, refreshNotice);
     });
     bar.appendChild(sortBtn);
@@ -2593,6 +2667,18 @@ function openNoteEditor(tracker, note) {
         });
       }
       sortEvents(tracker);
+      if (isRemote(tracker)) {
+        api(`/trackers/${tracker.id}/events`, {
+          method: 'POST',
+          body: JSON.stringify({
+            title: text, url: url || null, source: srcIn.value.trim(),
+            date: dateIn.value || dayOf(null),
+          }),
+        }).then(() => pullTimeline(tracker))
+          .then((full) => openTrackerTimeline(full))
+          .catch((e) => toast(e.message));
+        return;
+      }
       save();
       openTrackerTimeline(tracker);
     });
@@ -2613,6 +2699,13 @@ function openNoteEditor(tracker, note) {
 
 function removeEvent(tracker, ev) {
   tracker.events = tracker.events.filter((e) => e.url !== ev.url);
+  if (isRemote(tracker)) {
+    api(`/trackers/${tracker.id}/events`, {
+      method: 'DELETE', body: JSON.stringify({ url: ev.url }),
+    }).catch(() => {});
+    if (tracker.counts) tracker.counts.events = Math.max(0, tracker.counts.events - 1);
+    return;
+  }
   // a removed article must not come back on the next sweep
   if (!ev.note) {
     if (!tracker.dropped) tracker.dropped = [];
@@ -2627,16 +2720,38 @@ function buildTrackerPage() {
   const page = el('section', 'page');
   const inner = el('div', 'page-inner');
 
+  // A signed-in account renders the server's issues; otherwise this device's.
+  const all = trackerList();
+
+  const acct = el('div', 'sortrow');
+  if (account.signedIn) {
+    acct.appendChild(el('span', null, `${account.email} · 서버 저장`));
+    if (S.trackers.length) {
+      const mv = el('button', 'sort-btn', `이 기기 이슈 ${S.trackers.length}개 옮기기`);
+      mv.addEventListener('click', () => openMigrate());
+      acct.appendChild(mv);
+    }
+    const acc = el('button', 'sort-btn', '계정');
+    acc.addEventListener('click', () => openLogin());
+    acct.appendChild(acc);
+  } else {
+    acct.appendChild(el('span', null, '이 기기에만 저장됨'));
+    const login = el('button', 'sort-btn primary-btn', '로그인하고 기기 간 동기화');
+    login.addEventListener('click', () => openLogin());
+    acct.appendChild(login);
+  }
+  inner.appendChild(acct);
+
   const seg = el('div', 'segrow');
   for (const [key, label] of Object.entries(TRACKER_STATUS)) {
-    const n = S.trackers.filter((t) => t.status === key).length;
+    const n = all.filter((t) => t.status === key).length;
     const b = el('button', 'seg' + (trackerFilter === key ? ' on' : ''), `${label} ${n}`);
     b.addEventListener('click', () => { trackerFilter = key; rebuildPages(); });
     seg.appendChild(b);
   }
   inner.appendChild(seg);
 
-  const list = S.trackers.filter((t) => t.status === trackerFilter);
+  const list = all.filter((t) => t.status === trackerFilter);
   if (!list.length) {
     inner.appendChild(el('p', 'placeholder', trackerFilter === 'active'
       ? '추적 중인 이슈가 없습니다. 아래에서 추가하세요.'
@@ -2661,9 +2776,24 @@ function buildTrackerPage() {
         { label: '⚙ 수집 범위·매체 설정', onClick() { openBackfill(tracker); } },
         {
           label: other === 'closed' ? '■ 종료로 이동' : '▶ 다시 진행중으로',
-          onClick() {
+          async onClick() {
             tracker.status = other;
-            save();
+            if (isRemote(tracker)) {
+              try {
+                await api(`/trackers/${tracker.id}`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({
+                    name: tracker.name, all: tracker.all, any: tracker.any,
+                    kr: tracker.kr, en: tracker.en, from: tracker.from,
+                    status: other, perDay: tracker.perDay,
+                    allSources: tracker.allSources, order: tracker.order,
+                  }),
+                });
+                await pullTrackers();
+              } catch (err) { toast(err.message); return; }
+            } else {
+              save();
+            }
             trackerFilter = other;
             rebuildPages();
           },
@@ -2671,10 +2801,21 @@ function buildTrackerPage() {
         {
           label: '✕ 이슈 삭제',
           onClick() {
-            if (!confirm(`'${tracker.name}' 이슈와 타임라인을 삭제할까요?`)) return;
-            S.trackers = S.trackers.filter((t) => t.id !== tracker.id);
-            save();
-            rebuildPages();
+            confirmSheet(`'${tracker.name}' 이슈와 타임라인을 삭제합니다`, '✕ 삭제', async () => {
+              if (isRemote(tracker)) {
+                try {
+                  await api(`/trackers/${tracker.id}`, { method: 'DELETE' });
+                  await pullTrackers();
+                } catch (err) {
+                  toast(err.message);
+                  return;
+                }
+              } else {
+                S.trackers = S.trackers.filter((t) => t.id !== tracker.id);
+                save();
+              }
+              rebuildPages();
+            });
           },
         },
       ]);
@@ -2683,12 +2824,21 @@ function buildTrackerPage() {
     card.appendChild(top);
 
     const meta = el('div', 'tk-meta');
-    const fresh = newEventCount(tracker);
+    // A server tracker arrives with counts and no events; a local one has the
+    // events themselves. Both have to render the same summary line.
+    const c = tracker.counts;
+    const fresh = c ? c.unseen : newEventCount(tracker);
     if (fresh) meta.appendChild(el('span', 'badge', `새 ${fresh}건`));
-    const days = eventsByDay(tracker);
-    meta.appendChild(el('span', null, days.length
-      ? `${tracker.events.length}건 · ${days[days.length - 1].date} ~ ${days[0].date}`
-      : '모인 기사 없음'));
+    if (c) {
+      meta.appendChild(el('span', null, c.events
+        ? `${c.events}건 · ${c.firstDate} ~ ${c.lastDate}`
+        : '모인 기사 없음'));
+    } else {
+      const days = eventsByDay(tracker);
+      meta.appendChild(el('span', null, days.length
+        ? `${tracker.events.length}건 · ${days[days.length - 1].date} ~ ${days[0].date}`
+        : '모인 기사 없음'));
+    }
     card.appendChild(meta);
 
     const kw = el('div', 'tk-kw');
@@ -2829,6 +2979,13 @@ function trackFromArticle(item) {
         coverage: item.coverage || 0,
         addedAt: new Date().toISOString(),
       });
+      if (serverBacked()) {
+        go.disabled = true;
+        createRemoteTracker(draft, item)
+          .then((t) => { rebuildPages(); openTrackerUpdate(t, true); })
+          .catch((e) => { go.disabled = false; toast(e.message); });
+        return;
+      }
       S.trackers.push(draft);
       save();
       collectTrackers();
@@ -2853,6 +3010,12 @@ function trackFromArticle(item) {
         coverage: item.coverage || 0,
         addedAt: new Date().toISOString(),
       });
+      if (serverBacked()) {
+        createRemoteTracker(draft, item)
+          .then(() => { closeOverlay(); rebuildPages(); })
+          .catch((e) => toast(e.message));
+        return;
+      }
       S.trackers.push(draft);
       save();
       collectTrackers();
@@ -2864,13 +3027,49 @@ function trackFromArticle(item) {
   });
 }
 
+// The seed article travels with the create call so the server writes both in
+// one round trip and the timeline is never briefly empty.
+async function createRemoteTracker(draft, item) {
+  const r = await api('/trackers', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: draft.name, all: draft.all, any: draft.any, kr: draft.kr,
+      en: draft.en, from: draft.from, status: draft.status,
+      perDay: draft.perDay, allSources: draft.allSources, order: draft.order,
+      seed: item ? {
+        title: item.title, url: item.link, source: item.source || '',
+        date: dayOf(item.pubDate), coverage: item.coverage || 0,
+      } : undefined,
+    }),
+  });
+  await pullTrackers();
+  return { ...r.tracker, _partial: false };
+}
+
 // Manual pin: keyword rules miss articles whose title words differ, so an
 // article can be dropped into a timeline by hand.
 // A hand-pinned article is kept even when it duplicates one already on that
 // day: the user chose this specific piece, so the automatic dedup rule does
 // not get to overrule them. Only the identical url is refused.
 function pinToTracker(tracker, item) {
-  if (tracker.events.some((e) => e.url === item.link)) return false;
+  if ((tracker.events || []).some((e) => e.url === item.link)) return false;
+  if (isRemote(tracker)) {
+    api(`/trackers/${tracker.id}/events`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: item.title, url: item.link, source: item.source || '',
+        date: dayOf(item.pubDate), coverage: item.coverage || 0,
+      }),
+    }).catch(() => {});
+    tracker.events.push({
+      date: dayOf(item.pubDate), title: item.title, source: item.source || '',
+      url: item.link, coverage: item.coverage || 0, manual: true,
+      addedAt: new Date().toISOString(),
+    });
+    if (tracker.counts) tracker.counts.events++;
+    sortEvents(tracker);
+    return true;
+  }
   tracker.events.push({
     date: dayOf(item.pubDate),
     title: item.title,
@@ -2890,7 +3089,7 @@ function pinToTracker(tracker, item) {
 }
 
 function addToTrackerSheet(item) {
-  const actions = S.trackers.map((tracker) => {
+  const actions = trackerList().map((tracker) => {
     const has = tracker.events.some((e) => e.url === item.link);
     return {
       label: `${has ? '✓ ' : ''}${tracker.name}`
@@ -3074,9 +3273,11 @@ function buildTabBar() {
     b.appendChild(svg);
 
     if (tab.id === 'tracker') {
-      const fresh = S.trackers
+      // A server tracker reports its unread count with the list; a local one
+      // has to be counted from its own events.
+      const fresh = trackerList()
         .filter((t) => t.status === 'active')
-        .reduce((n, t) => n + newEventCount(t), 0);
+        .reduce((n, t) => n + (t.counts ? t.counts.unseen : newEventCount(t)), 0);
       if (fresh) b.appendChild(el('span', 'tb-badge', fresh > 99 ? '99+' : String(fresh)));
     }
     b.appendChild(el('span', 'tb-label', tab.label));
@@ -3307,6 +3508,246 @@ function applySettingChange() {
   openSettings();
 }
 
+// ---------- account (optional server sync) ----------
+
+// The app works with no account at all: trackers live in localStorage exactly
+// as before. Signing in switches the tracker tab to the server copy, which is
+// what makes an issue followed on the phone visible on the desktop and lets
+// collection keep running while the app is closed. Nothing else — blocked
+// outlets, widgets, weather location — is uploaded; those are genuinely
+// per-device preferences and syncing them would be a nuisance, not a feature.
+
+const account = { signedIn: false, email: null, checked: false };
+
+// Remote trackers are held here rather than in S, so signing out cannot leave
+// the server's copy written into this device's storage.
+let remoteTrackers = null;
+
+function serverBacked() {
+  return account.signedIn && remoteTrackers !== null;
+}
+
+// The one place that decides which list the UI renders.
+function trackerList() {
+  return serverBacked() ? remoteTrackers : S.trackers;
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(`/api${path}`, {
+    credentials: 'same-origin',
+    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+    ...opts,
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // an HTML error page from the edge, not our API
+    throw new Error(`서버 응답을 읽을 수 없습니다 (${res.status})`);
+  }
+  if (!res.ok) throw new Error((data && data.error) || `서버 오류 (${res.status})`);
+  return data;
+}
+
+async function refreshAccount() {
+  try {
+    const r = await api('/auth/me');
+    account.signedIn = !!r.signedIn;
+    account.email = r.email || null;
+  } catch {
+    // No API deployed, or offline. Staying signed out keeps the app usable.
+    account.signedIn = false;
+    account.email = null;
+  }
+  account.checked = true;
+  return account.signedIn;
+}
+
+async function pullTrackers() {
+  if (!account.signedIn) {
+    remoteTrackers = null;
+    return null;
+  }
+  const r = await api('/trackers');
+  // The list view carries counts but no events; a timeline is fetched when
+  // it is opened, so a hundred issues do not mean a hundred timelines.
+  remoteTrackers = r.trackers.map((t) => ({ ...t, events: t.events || [], _partial: true }));
+  return remoteTrackers;
+}
+
+async function pullTimeline(tracker) {
+  const r = await api(`/trackers/${tracker.id}`);
+  const full = { ...r.tracker, _partial: false };
+  if (remoteTrackers) {
+    const i = remoteTrackers.findIndex((t) => t.id === tracker.id);
+    if (i >= 0) remoteTrackers[i] = { ...remoteTrackers[i], ...full };
+  }
+  return full;
+}
+
+function openLogin() {
+  openPanel('로그인', (body) => {
+    if (account.signedIn) {
+      const sec = el('div', 'set-section');
+      sec.appendChild(el('div', 'set-title', '로그인됨'));
+      sec.appendChild(el('p', 'choice-hint', account.email));
+      sec.appendChild(el('p', 'choice-hint',
+        '이슈는 서버에 저장되어 다른 기기에서도 같이 보이고, 앱을 닫아둬도 30분마다 새 기사가 쌓입니다.'));
+      body.appendChild(sec);
+
+      const out = el('button', 'add-dashed', '로그아웃');
+      out.addEventListener('click', () => {
+        confirmSheet('로그아웃할까요?', '로그아웃', async () => {
+          try {
+            await api('/auth/logout', { method: 'POST', body: '{}' });
+          } catch { /* the cookie is cleared server-side either way */ }
+          account.signedIn = false;
+          account.email = null;
+          remoteTrackers = null;
+          closeOverlay();
+          rebuildPages();
+          toast('로그아웃했습니다.');
+        });
+      });
+      body.appendChild(out);
+      return;
+    }
+
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', '메일 주소로 로그인'));
+    sec.appendChild(el('p', 'choice-hint',
+      '비밀번호는 없습니다. 메일로 받은 링크를 누르면 로그인됩니다. '
+      + '로그인하면 이슈가 서버에 저장되어 폰과 PC에서 같이 보입니다.'));
+
+    const input = el('input', 'in');
+    input.type = 'email';
+    input.inputMode = 'email';
+    input.autocomplete = 'email';
+    input.placeholder = 'you@example.com';
+    sec.appendChild(input);
+
+    const status = el('p', 'placeholder', '');
+    const send = el('button', 'primary', '로그인 링크 받기');
+    send.style.width = '100%';
+    const submit = async () => {
+      const email = input.value.trim();
+      if (!email) { input.focus(); return; }
+      send.disabled = true;
+      send.textContent = '보내는 중…';
+      try {
+        const r = await api('/auth/request', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        });
+        status.textContent = `${email} 로 링크를 보냈습니다. 메일함을 확인하세요. `
+          + '15분 뒤에 만료됩니다.';
+        // Only present when the server has no mail key configured; opening it
+        // here is what makes local development usable.
+        if (r.dev) {
+          const a = el('a', null, '메일 설정 전입니다 — 이 링크로 바로 로그인');
+          a.href = r.dev;
+          status.appendChild(document.createElement('br'));
+          status.appendChild(a);
+        }
+        send.textContent = '다시 보내기';
+      } catch (err) {
+        status.textContent = `✕ ${err.message}`;
+        send.textContent = '로그인 링크 받기';
+      }
+      send.disabled = false;
+    };
+    send.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    sec.appendChild(send);
+    sec.appendChild(status);
+    body.appendChild(sec);
+
+    if (S.trackers.length) {
+      const mig = el('div', 'set-section');
+      mig.appendChild(el('div', 'set-title', '이 기기의 이슈'));
+      mig.appendChild(el('p', 'choice-hint',
+        `이 기기에 이슈 ${S.trackers.length}개가 있습니다. 로그인한 뒤 서버로 옮길 수 있습니다. `
+        + '옮기기 전에 백업을 받아두세요.'));
+      const b = el('button', 'add-dashed', '⭳ 먼저 백업하기');
+      b.addEventListener('click', () => openBackupPanel());
+      mig.appendChild(b);
+      body.appendChild(mig);
+    }
+  });
+}
+
+// Copies this device's issues to the account. The local copy is left alone —
+// if anything goes wrong the user still has it, and the backup file besides.
+async function migrateLocalTrackers(onProgress) {
+  const out = { moved: 0, events: 0, failed: [] };
+  for (const t of S.trackers) {
+    onProgress(`${t.name}…`);
+    try {
+      const r = await api('/trackers', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: t.name, all: t.all, any: t.any, kr: t.kr, en: t.en,
+          from: t.from, status: t.status, perDay: t.perDay,
+          allSources: t.allSources, order: t.order,
+        }),
+      });
+      const id = r.tracker.id;
+      // Events go up one by one rather than in a batch: a partial failure
+      // then costs one article, not the whole timeline.
+      for (const ev of t.events || []) {
+        try {
+          await api(`/trackers/${id}/events`, {
+            method: 'POST',
+            body: JSON.stringify({
+              title: ev.title, url: ev.note ? null : ev.url,
+              source: ev.source, date: ev.date, coverage: ev.coverage,
+            }),
+          });
+          out.events++;
+        } catch { /* one article is not worth failing the issue over */ }
+      }
+      out.moved++;
+    } catch (err) {
+      out.failed.push(`${t.name}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
+function openMigrate() {
+  openPanel('서버로 옮기기', (body) => {
+    const sec = el('div', 'set-section');
+    const evCount = S.trackers.reduce((n, t) => n + ((t.events || []).length), 0);
+    sec.appendChild(el('div', 'set-title', `이슈 ${S.trackers.length}개 · 기사 ${evCount}건`));
+    sec.appendChild(el('p', 'choice-hint',
+      '이 기기의 이슈를 계정으로 복사합니다. 기기의 원본은 지우지 않으니, '
+      + '잘못되어도 그대로 남아 있습니다.'));
+    body.appendChild(sec);
+
+    const status = el('p', 'placeholder', '');
+    const go = el('button', 'primary', '옮기기 시작');
+    go.style.width = '100%';
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      go.textContent = '옮기는 중…';
+      const r = await migrateLocalTrackers((m) => { status.textContent = m; });
+      await pullTrackers();
+      rebuildPages();
+      const parts = [`이슈 ${r.moved}개 · 기사 ${r.events}건을 옮겼습니다.`];
+      if (r.failed.length) parts.push(`실패: ${r.failed.join(' / ')}`);
+      status.textContent = parts.join(' ');
+      go.textContent = '완료';
+    });
+    body.appendChild(go);
+    body.appendChild(status);
+
+    const bak = el('button', 'add-dashed', '⭳ 먼저 백업하기');
+    bak.addEventListener('click', () => openBackupPanel());
+    body.appendChild(bak);
+  });
+}
+
 // ---------- backup ----------
 
 // Everything lives in this device's localStorage, so clearing site data — or
@@ -3534,6 +3975,17 @@ function openSettings() {
     if (!S.preferredSources.length) psSec.appendChild(el('p', 'w-empty', '없음'));
     psSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.preferredSources, v), 'known-sources'));
     body.appendChild(psSec);
+
+    const acc = el('div', 'set-section');
+    acc.appendChild(el('div', 'set-title', '계정'));
+    acc.appendChild(el('p', 'choice-hint', account.signedIn
+      ? `${account.email} 로 로그인되어 있습니다. 이슈는 서버에 저장됩니다.`
+      : '로그인하면 이슈가 서버에 저장되어 폰과 PC에서 같이 보이고, '
+        + '앱을 닫아둬도 새 기사가 쌓입니다. 로그인하지 않아도 앱은 그대로 씁니다.'));
+    const abtn = el('button', 'add-dashed', account.signedIn ? '계정 관리' : '메일로 로그인');
+    abtn.addEventListener('click', () => openLogin());
+    acc.appendChild(abtn);
+    body.appendChild(acc);
 
     const bak = el('div', 'set-section');
     bak.appendChild(el('div', 'set-title', '백업 · 복원'));
@@ -3784,6 +4236,18 @@ function setupPullToRefresh() {
 
 // ---------- boot ----------
 
+// The magic link comes back as /?login=ok. Reporting it and clearing the query
+// keeps a refresh from re-announcing a login that already happened.
+function showLoginResult() {
+  const q = new URLSearchParams(location.search);
+  const r = q.get('login');
+  if (!r) return;
+  history.replaceState(null, '', location.pathname);
+  if (r === 'ok') toast('로그인했습니다.');
+  else if (r === 'expired') toast('링크가 만료됐습니다. 다시 로그인해 주세요.');
+  else toast('로그인 링크가 유효하지 않습니다.');
+}
+
 async function main() {
   document.getElementById('settings-btn').addEventListener('click', openSettings);
   document.getElementById('share-btn').addEventListener('click', shareApp);
@@ -3799,6 +4263,18 @@ async function main() {
   collectTrackers();
   showUpdatedAt();
   rebuildPages();
+
+  // The account check runs after the first paint: the feed must not wait on a
+  // request that fails whenever the API is not deployed.
+  refreshAccount().then(async (signedIn) => {
+    if (signedIn) {
+      try {
+        await pullTrackers();
+      } catch { /* keep showing the local list */ }
+    }
+    rebuildPages();
+    showLoginResult();
+  });
   restoreViewState();
   setupPullToRefresh();
   setupEdgeSwipe();

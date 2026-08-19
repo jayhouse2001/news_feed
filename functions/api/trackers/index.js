@@ -5,6 +5,9 @@ import { rowToTracker, rowToEvent, validateTracker } from '../../_lib/tracker.js
 // issue would send megabytes to render a few cards.
 export const onRequestGet = handler(async ({ request, env }) => {
   const user = await requireUser(env, request);
+  // The newest headline comes along because the dashboard widget shows it;
+  // without it every issue would read "no articles" until its timeline was
+  // opened. One row per issue is cheap — the full timeline is not.
   const { results } = await env.DB.prepare(
     `SELECT t.*,
             (SELECT COUNT(*) FROM events e WHERE e.tracker_id = t.id) AS n_events,
@@ -12,7 +15,15 @@ export const onRequestGet = handler(async ({ request, env }) => {
             (SELECT MAX(date) FROM events e WHERE e.tracker_id = t.id) AS last_date,
             (SELECT COUNT(*) FROM events e
               WHERE e.tracker_id = t.id AND e.is_note = 0
-                AND e.added_at > COALESCE(t.seen_at, '')) AS n_new
+                AND e.added_at > COALESCE(t.seen_at, '')) AS n_new,
+            (SELECT date  FROM events e WHERE e.tracker_id = t.id
+              ORDER BY date DESC, id DESC LIMIT 1) AS top_date,
+            (SELECT title FROM events e WHERE e.tracker_id = t.id
+              ORDER BY date DESC, id DESC LIMIT 1) AS top_title,
+            (SELECT source FROM events e WHERE e.tracker_id = t.id
+              ORDER BY date DESC, id DESC LIMIT 1) AS top_source,
+            (SELECT url   FROM events e WHERE e.tracker_id = t.id
+              ORDER BY date DESC, id DESC LIMIT 1) AS top_url
        FROM trackers t
       WHERE t.user_id = ?
       ORDER BY t.updated_at DESC`
@@ -20,7 +31,16 @@ export const onRequestGet = handler(async ({ request, env }) => {
 
   return json({
     trackers: results.map((r) => ({
-      ...rowToTracker(r),
+      ...rowToTracker(r, r.top_title ? [{
+        date: r.top_date,
+        title: r.top_title,
+        source: r.top_source || '',
+        url: r.top_url,
+        coverage: 0,
+        note: false,
+        manual: false,
+        addedAt: r.top_date,
+      }] : []),
       counts: {
         events: r.n_events,
         unseen: r.n_new,
