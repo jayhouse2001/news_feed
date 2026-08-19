@@ -12,8 +12,8 @@ binding = "DB"
 database_name = "news-feeder"
 database_id = "f40060f0-afd0-42f3-86f6-86198e1522bd"
 
-# Holds the collected feed as one blob. Filled in after
-# `wrangler kv namespace create NEWS` — see SERVER.md.
+# Holds the collected feed as one blob. The Pages project binds the same
+# namespace under the same name, since /api/news reads what this Worker writes.
 [[kv_namespaces]]
 binding = "NEWS"
-id = "REPLACE_WITH_KV_ID"
+id = "3ac943558c2a438b8834e949a26ebc07"
