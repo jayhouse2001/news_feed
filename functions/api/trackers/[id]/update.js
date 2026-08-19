@@ -1,20 +1,24 @@
 import { handler, json, requireUser, HttpError } from '../../../_lib/util.js';
-import { rowToTracker } from '../../../_lib/tracker.js';
-import { sweepTracker } from '../../../_lib/sweep.js';
 
-// The manual "update now" button. The cron keeps every issue current on its
-// own, so this exists for the moment right after an issue is created, when
-// waiting up to half an hour for a first timeline would feel broken.
+// Searching an issue's history means asking Google News, and Google answers 503
+// to Cloudflare egress — every relay refuses it from here too. So the server
+// cannot do this, and saying so is better than returning an empty sweep that
+// looks like "no articles found".
+//
+// The browser can reach Google, so the client runs the search itself and posts
+// what it finds. Keeping timelines current is separate and does happen here:
+// the cron matches new articles against every issue on each collection.
 export const onRequestPost = handler(async ({ request, env, params }) => {
   const user = await requireUser(env, request);
   const row = await env.DB.prepare(
-    'SELECT * FROM trackers WHERE id = ? AND user_id = ?'
+    'SELECT id FROM trackers WHERE id = ? AND user_id = ?'
   ).bind(params.id, user.id).first();
   if (!row) throw new HttpError('이슈를 찾을 수 없습니다.', 404);
 
-  const url = new URL(request.url);
-  const force = url.searchParams.get('force') === '1';
-
-  const result = await sweepTracker(env, rowToTracker(row), { force });
-  return json({ result });
+  return json({
+    result: {
+      clientSweep: true,
+      reason: 'google-blocked-from-edge',
+    },
+  });
 });

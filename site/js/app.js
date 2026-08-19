@@ -1136,8 +1136,13 @@ function indexAdd(index, date, title) {
   index.get(date).push(titleTokens(title));
 }
 
+// Takes an article or a bare title. The server has a function of the same name
+// that only ever gets a string, and calling this one with a string threw where
+// the difference was invisible — accepting both removes the trap rather than
+// documenting it.
 function trackerMatches(tracker, item) {
-  const title = item.title.toLowerCase();
+  const title = String(typeof item === 'string' ? item : (item && item.title) || '')
+    .toLowerCase();
   const all = (tracker.all || []).map((w) => w.toLowerCase());
   const any = (tracker.any || []).map((w) => w.toLowerCase());
   if (all.length && !all.every((w) => title.includes(w))) return false;
@@ -1507,6 +1512,12 @@ async function runBackfill(tracker, onProgress, opts) {
       cur = next;
     }
   }
+  // Newest month first. A two-year span is two dozen windows before any of them
+  // splits, and a busy one splits several times over — so an oldest-first queue
+  // spends itself on the quiet beginning of an issue and never reaches the part
+  // the reader cares about. Observed on a war tracked from 2024: the timeline
+  // stopped dead at the month fighting began.
+  queue.reverse();
   if (!queue.length) {
     return { added: 0, skipped: 0, requests: 0, truncated: 0, filtered: 0, capped: 0, upToDate: true };
   }
@@ -1525,6 +1536,8 @@ async function runBackfill(tracker, onProgress, opts) {
   const perDay = tracker.perDay || DEFAULT_PER_DAY;
   const allSources = !!tracker.allSources;
   const candidates = [];
+  // What actually made it onto the timeline, so a signed-in run can upload it
+  const collected = [];
 
   let added = 0;
   let skipped = 0;
@@ -1650,6 +1663,7 @@ async function runBackfill(tracker, onProgress, opts) {
       }
       kept.push({ ...c, tk });
       indexAdd(index, day, c.title);
+      collected.push(c);
       tracker.events.push({
         date: c.date,
         title: c.title,
@@ -1676,7 +1690,7 @@ async function runBackfill(tracker, onProgress, opts) {
   save();
   return {
     added, skipped, requests, truncated, filtered, capped, rateBlocked,
-    usedGnews, usedGdelt, gnewsError,
+    usedGnews, usedGdelt, gnewsError, collected,
   };
 }
 
@@ -1692,14 +1706,16 @@ function backfillQuery(tracker) {
 // should not have to know that recent news and old news arrive by different
 // routes.
 async function runUpdate(tracker, onProgress) {
-  // A server tracker is swept by the server; the browser only asks and waits.
-  // This is the path that no longer needs a CORS relay.
+  // History is searched here even for a server-backed issue: Google answers 503
+  // to Cloudflare, and this device can reach it. What is found is uploaded, so
+  // the timeline still ends up on the account and on every other device.
   if (isRemote(tracker)) {
-    onProgress('서버에서 기사를 모으는 중…');
-    const r = await api(`/trackers/${tracker.id}/update`, { method: 'POST', body: '{}' });
+    const r = await runBackfill(tracker, onProgress, { force: false });
+    onProgress('서버에 올리는 중…');
+    await uploadEvents(tracker, r.collected || []);
     const full = await pullTimeline(tracker);
     Object.assign(tracker, full);
-    return { server: true, sweep: r.result, fromFeed: 0, feedOk: true, sweepError: null };
+    return { sweep: r, fromFeed: 0, feedOk: true, sweepError: null };
   }
   onProgress('최신 뉴스 확인 중…');
   const before = tracker.events.length;
@@ -3038,6 +3054,13 @@ function trackFromArticle(item) {
       for (const c of candidates.slice().sort((a, b) => a.at - b.at)) {
         const on = chosen.has(c.word);
         const chip = el('button', 'kw-chip' + (on ? ' on' : ''), c.word);
+        // A word matching a large slice of the feed will drown the timeline in
+        // articles that merely mention it, which is not visible from the word.
+        if (c.n >= 10) {
+          chip.appendChild(el('span', 'kw-n', `${c.n}`));
+          chip.classList.add('broad');
+          chip.title = `피드 ${c.n}건에 등장 — 무관한 기사가 섞일 수 있습니다`;
+        }
         chip.setAttribute('aria-pressed', on ? 'true' : 'false');
         chip.addEventListener('click', () => {
           if (chosen.has(c.word)) chosen.delete(c.word);
@@ -3055,16 +3078,34 @@ function trackFromArticle(item) {
         chip.addEventListener('click', () => { chosen.delete(w); syncDraft(); redraw(); });
         box.appendChild(chip);
       }
-      count.textContent = chosen.size
-        ? `${chosen.size}개 선택 — 이 중 하나라도 제목에 있으면 수집합니다.`
-        : '최소 하나는 선택해야 합니다.';
+      // What this rule would collect from the feed as it stands. Telling someone
+      // a word is "too common" does not land; showing them that 미국 drags in
+      // twelve unrelated articles does.
+      if (!chosen.size) {
+        count.textContent = '최소 하나는 선택해야 합니다.';
+      } else {
+        const rule = { all: [], any: [...chosen] };
+        const hits = newsData.categories
+          .flatMap((c) => c.items)
+          .filter((it) => !isBlocked(it) && trackerMatches(rule, it));
+        count.textContent = `${chosen.size}개 선택 · 지금 피드에서 ${hits.length}건 걸립니다.`;
+        preview.textContent = '';
+        for (const it of hits.slice(0, 3)) {
+          preview.appendChild(el('div', 'kw-hit', it.title));
+        }
+        if (hits.length > 3) {
+          preview.appendChild(el('div', 'kw-hit muted', `… 외 ${hits.length - 3}건`));
+        }
+      }
     };
 
+    const preview = el('div', 'kw-preview');
     ksec.appendChild(box);
     ksec.appendChild(count);
+    ksec.appendChild(preview);
     ksec.appendChild(el('p', 'choice-hint',
       '제목의 단어를 눌러 켜고 끕니다. 진한 것이 켜진 상태입니다. '
-      + "너무 흔한 단어(예: '서울')를 켜면 무관한 기사가 섞입니다."));
+      + '숫자가 붙은 단어는 피드에 그만큼 흔해서, 켜면 무관한 기사가 딸려옵니다.'));
 
     const form = el('div', 'add-form');
     const kin = el('input', 'in');
@@ -3195,6 +3236,28 @@ async function createRemoteTracker(draft, item) {
   });
   await pullTrackers();
   return { ...r.tracker, _partial: false };
+}
+
+// Sends locally-found articles to the account. One at a time rather than in a
+// batch: a partial failure then costs one article instead of the whole sweep,
+// and the server applies its own dedup to each.
+async function uploadEvents(tracker, events) {
+  let sent = 0;
+  for (const ev of events) {
+    try {
+      await api(`/trackers/${tracker.id}/events`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: ev.title, url: ev.url, source: ev.source,
+          date: ev.date, coverage: ev.coverage || 0,
+        }),
+      });
+      sent++;
+    } catch {
+      // one article is not worth failing the sweep over
+    }
+  }
+  return sent;
 }
 
 // Manual pin: keyword rules miss articles whose title words differ, so an

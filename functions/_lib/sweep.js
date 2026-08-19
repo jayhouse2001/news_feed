@@ -149,6 +149,9 @@ export async function sweepTracker(env, tracker, { force = false } = {}) {
       cur = next;
     }
   }
+  // Newest first: a long span is more windows than the request budget, and the
+  // recent end is what a reader opens the issue to see.
+  queue.reverse();
   if (!queue.length) return { added: 0, requests: 0, upToDate: true };
 
   const [exRows, evRows] = await Promise.all([

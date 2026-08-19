@@ -104,6 +104,15 @@ const PUBLISHER_SOURCES = [
   { cat: 'intl_ent', name: 'The Guardian', url: 'https://www.theguardian.com/uk/culture/rss' },
   { cat: 'intl_ent', name: 'Variety', url: 'https://variety.com/feed/' },
   { cat: 'intl_ent', name: 'Deadline', url: 'https://deadline.com/feed/' },
+  // Science had no publisher feed and so lived on Google alone — which meant an
+  // empty category the moment collection moved to Cloudflare, where Google
+  // answers 503. These are science and tech desks with working RSS; they carry
+  // no images, which is why they were skipped originally, but a category with
+  // no pictures beats a category with no articles. etnews was tried and dropped:
+  // its only feeds are general-news sections, so sinkholes and crime stories
+  // arrived under 과학.
+  { cat: 'science', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
+  { cat: 'science', name: '로봇신문', url: 'https://www.irobotnews.com/rss/allArticle.xml' },
 ];
 
 // Two sources per category now, and the reader pages through them 15 at a

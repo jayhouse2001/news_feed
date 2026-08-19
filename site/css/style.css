@@ -473,6 +473,38 @@ button:disabled { opacity: .35; cursor: default; }
 
 /* A keyword candidate: tap to include it in the rule. Off is an outline so
    the difference from on is fill, not a checkbox the eye has to find. */
+/* The count a broad keyword carries, and a sample of what the rule catches.
+   Both exist because "this word is too common" is advice nobody can act on,
+   while "this pulls in 12 articles, here are three" is. */
+.kw-n {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.kw-chip.on .kw-n { background: rgba(255, 255, 255, .25); color: #fff; }
+
+.kw-chip.broad:not(.on) { border-style: dashed; }
+
+.kw-preview { margin: 4px 0 2px; display: flex; flex-direction: column; gap: 3px; }
+
+.kw-hit {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  padding-left: 9px;
+  border-left: 2px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kw-hit.muted { border-color: transparent; opacity: .7; }
+
 .kw-chip {
   padding: 7px 12px;
   border-radius: 999px;
