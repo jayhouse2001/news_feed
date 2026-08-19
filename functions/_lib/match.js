@@ -58,9 +58,17 @@ export async function matchArticles(env, articles) {
     const inserts = [];
     const ts = new Date().toISOString();
 
+    // Days the timeline already covers, before this batch adds anything. A day
+    // that has been read once should stay as it was read — new articles about
+    // last week do not change what happened last week, and quietly rewriting a
+    // settled day is worse than omitting them. Anything genuinely missed can
+    // still be added by hand.
+    const settled = new Set(index.keys());
+
     for (const a of hits) {
       if (seen.has(a.link)) continue;
       const date = dayOfIso(a.pubDate);
+      if (settled.has(date)) continue;
       const tk = titleTokens(a.title);
       const dayIdx = index.get(date) || [];
       if ((perDayCount.get(date) || 0) >= perDay) continue;

@@ -1159,13 +1159,25 @@ function collectTrackers() {
     const seen = new Set(tracker.events.map((e) => e.url));
     for (const url of tracker.dropped || []) seen.add(url);
     const index = dedupIndex(tracker);
+    // Days already on the timeline are settled: refreshing adds new days, it
+    // does not reopen old ones. Reading an issue is following a sequence, and
+    // a day changing under the reader breaks that.
+    const settled = new Set(index.keys());
+    const perDay = tracker.perDay || DEFAULT_PER_DAY;
+    const dayCount = new Map();
+    for (const ev of tracker.events) dayCount.set(ev.date, (dayCount.get(ev.date) || 0) + 1);
+
     for (const cat of newsData.categories) {
       for (const item of cat.items) {
         if (seen.has(item.link) || isBlocked(item) || !trackerMatches(tracker, item)) continue;
+        if (isBlockedSource(item.source)) continue;
         const date = dayOf(item.pubDate);
+        if (settled.has(date)) continue;
+        if ((dayCount.get(date) || 0) >= perDay) continue;
         // one story reaches several categories and the wires rewrite each
         // other, so a near-identical title already on that day is not news
         if (isDuplicate(index, date, item.title)) continue;
+        dayCount.set(date, (dayCount.get(date) || 0) + 1);
         seen.add(item.link);
         indexAdd(index, date, item.title);
         tracker.events.push({
