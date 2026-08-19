@@ -7,8 +7,7 @@
 // would mean two deploys to keep in step.
 
 import { collectSlice, buildImageIndex, findImage, SLICE_COUNT } from '../shared/collect-news.js';
-import { rowToTracker } from '../functions/_lib/tracker.js';
-import { sweepTracker } from '../functions/_lib/sweep.js';
+import { matchArticles } from '../functions/_lib/match.js';
 
 export const NEWS_KEY = 'news:latest';
 
@@ -17,10 +16,6 @@ export const NEWS_KEY = 'news:latest';
 // serving its fallback, and the failure looks identical to a trigger that never
 // fired. This is the only way to tell those two apart without log access.
 export const STATUS_KEY = 'cron:last';
-
-// Issues are swept oldest-sweep-first, so a run that hits the ceiling leaves
-// the freshest for next time instead of starving the same tail every time.
-const MAX_TRACKERS_PER_RUN = 40;
 
 // Each slice is its own invocation, because the 50-subrequest ceiling is per
 // invocation and a whole collection wants about 69. The finished slices are
@@ -68,6 +63,17 @@ async function collectAndStore(env, sliceArg) {
   }
   const okCount = merged.filter((c) => !c.error).length;
   if (okCount === 0) throw new Error('all categories failed');
+
+  // Trackers are matched against what was just collected. This is the whole
+  // reason it happens here: the articles are already in memory, so keeping
+  // timelines current costs no requests at all.
+  let matched = null;
+  try {
+    matched = await matchArticles(env, merged.flatMap((c) => c.items || []));
+  } catch (e) {
+    console.error('match failed', e.message);
+    matched = { error: e.message };
+  }
   const data = { updatedAt: new Date().toISOString(), categories: merged };
   const total = merged.length;
   const body = JSON.stringify(data);
@@ -78,6 +84,7 @@ async function collectAndStore(env, sliceArg) {
   });
   return {
     slice,
+    matched,
     categories: `${okCount}/${total}`,
     items: data.categories.reduce((n, c) => n + c.items.length, 0),
     bytes: body.length,
@@ -95,29 +102,16 @@ async function purgeExpired(env) {
   ]);
 }
 
-async function sweepTrackers(env) {
+// Tracker collection itself now rides along with the news run, so all that is
+// left on its own schedule is expiry. Google cannot be searched from here at
+// all (503 to Cloudflare egress), which is why history stays a browser job.
+async function maintain(env) {
   const started = Date.now();
   await purgeExpired(env);
-
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM trackers
-      WHERE status = 'active'
-      ORDER BY COALESCE(swept_at, '') ASC
-      LIMIT ?`
-  ).bind(MAX_TRACKERS_PER_RUN).all();
-
-  let added = 0;
-  let failed = 0;
-  for (const row of results) {
-    try {
-      const r = await sweepTracker(env, rowToTracker(row));
-      added += r.added || 0;
-    } catch (e) {
-      failed++;
-      console.error('sweep failed', row.id, e.message);
-    }
-  }
-  return { trackers: results.length, added, failed, ms: Date.now() - started };
+  const n = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM trackers WHERE status = 'active'`
+  ).first();
+  return { active: n ? n.c : 0, ms: Date.now() - started };
 }
 
 async function run(env, trigger, slice) {
@@ -125,7 +119,7 @@ async function run(env, trigger, slice) {
   // take it down, or vice versa. They are reported together and settled apart.
   const [news, trackers] = await Promise.allSettled([
     collectAndStore(env, slice),
-    sweepTrackers(env),
+    maintain(env),
   ]);
   const summary = {
     at: new Date().toISOString(),
@@ -173,7 +167,7 @@ export default {
     if (only === 'news') {
       summary = { news: await collectAndStore(env, sliceParam != null ? Number(sliceParam) : null) };
     }
-    else if (only === 'trackers') summary = { trackers: await sweepTrackers(env) };
+    else if (only === 'trackers') summary = { trackers: await maintain(env) };
     else summary = await run(env, 'manual', sliceParam != null ? Number(sliceParam) : null);
     return new Response(JSON.stringify(summary, null, 2), {
       headers: { 'Content-Type': 'application/json' },
