@@ -12,6 +12,12 @@ import { sweepTracker } from '../functions/_lib/sweep.js';
 
 export const NEWS_KEY = 'news:latest';
 
+// Every run leaves a record here, successful or not. A Worker that throws on a
+// scheduled invocation is invisible otherwise: nothing writes, the app keeps
+// serving its fallback, and the failure looks identical to a trigger that never
+// fired. This is the only way to tell those two apart without log access.
+export const STATUS_KEY = 'cron:last';
+
 // Issues are swept oldest-sweep-first, so a run that hits the ceiling leaves
 // the freshest for next time instead of starving the same tail every time.
 const MAX_TRACKERS_PER_RUN = 40;
@@ -68,7 +74,7 @@ async function sweepTrackers(env) {
   return { trackers: results.length, added, failed, ms: Date.now() - started };
 }
 
-async function run(env) {
+async function run(env, trigger) {
   // News is the job every reader depends on, so a tracker failure must not
   // take it down, or vice versa. They are reported together and settled apart.
   const [news, trackers] = await Promise.allSettled([
@@ -76,17 +82,34 @@ async function run(env) {
     sweepTrackers(env),
   ]);
   const summary = {
+    at: new Date().toISOString(),
+    trigger: trigger || 'unknown',
     news: news.status === 'fulfilled' ? news.value : { error: news.reason.message },
     trackers: trackers.status === 'fulfilled' ? trackers.value
       : { error: trackers.reason.message },
   };
   console.log('cron', JSON.stringify(summary));
+  // Written last and separately: if the news put failed, this still records why.
+  if (env.NEWS) {
+    try {
+      await env.NEWS.put(STATUS_KEY, JSON.stringify(summary));
+    } catch (e) {
+      console.error('status write failed', e.message);
+    }
+  }
   return summary;
 }
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(run(env));
+    ctx.waitUntil(run(env, 'cron').catch(async (e) => {
+      console.error('cron threw', e.message);
+      if (env.NEWS) {
+        await env.NEWS.put(STATUS_KEY, JSON.stringify({
+          at: new Date().toISOString(), trigger: 'cron', fatal: e.message,
+        })).catch(() => {});
+      }
+    }));
   },
 
   // The same work, reachable by hand for a first fill or a check. Guarded by a
@@ -102,7 +125,7 @@ export default {
     let summary;
     if (only === 'news') summary = { news: await collectAndStore(env) };
     else if (only === 'trackers') summary = { trackers: await sweepTrackers(env) };
-    else summary = await run(env);
+    else summary = await run(env, 'manual');
     return new Response(JSON.stringify(summary, null, 2), {
       headers: { 'Content-Type': 'application/json' },
     });
