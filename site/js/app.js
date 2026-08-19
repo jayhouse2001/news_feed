@@ -2196,6 +2196,8 @@ function openTrackerTimeline(tracker, refreshNotice = '') {
     more.setAttribute('aria-label', '이슈 옵션');
     more.addEventListener('click', () => {
       openSheet(tracker.name, [
+        { label: '✦ 관련 없는 기사 정리 (AI)', onClick() { openAiFilter(tracker); } },
+        { label: '✦ 흐름 요약 (AI)', onClick() { openAiSummary(tracker); } },
         { label: '＋ 뉴스에서 골라 추가', onClick() { openPickArticles(tracker); } },
         { label: '✎ 직접 입력해 추가', onClick() { openNoteEditor(tracker, null); } },
         { label: '⚙ 수집 범위·매체 설정', onClick() { openBackfill(tracker); } },
@@ -3974,6 +3976,344 @@ function openMigrate() {
   });
 }
 
+// ---------- AI (optional, the user's own key) ----------
+
+// The tracker's keyword rule cannot tell "about this issue" from "contains this
+// word" — a rule matching 미국 collected the national debt and an altcoin
+// roundup into a war timeline. A model can, so an optional key unlocks three
+// things the rule cannot do: filter what was collected, propose a better rule,
+// and read the timeline back as a sequence of events.
+//
+// The key is the user's own and lives in this device's localStorage. It goes to
+// /api/ai only because a browser cannot call these providers directly, and that
+// endpoint uses it once and forgets it. Everything here is optional: with no
+// key, the app behaves exactly as before.
+
+const AI_KEY = 'nf:ai:v1';
+
+function loadAi() {
+  try {
+    const raw = localStorage.getItem(AI_KEY);
+    if (!raw) return { provider: 'claude', key: '', model: '' };
+    return { provider: 'claude', key: '', model: '', ...JSON.parse(raw) };
+  } catch {
+    return { provider: 'claude', key: '', model: '' };
+  }
+}
+
+let aiCfg = loadAi();
+let aiProviders = null;   // filled from /api/ai on first use
+
+function aiReady() {
+  return !!(aiCfg.key && aiCfg.provider);
+}
+
+function saveAi() {
+  localStorage.setItem(AI_KEY, JSON.stringify(aiCfg));
+}
+
+async function aiProviderList() {
+  if (aiProviders) return aiProviders;
+  const r = await api('/ai');
+  aiProviders = r.providers;
+  return aiProviders;
+}
+
+async function aiCall(task, payload) {
+  if (!aiReady()) throw new Error('AI 키가 설정되지 않았습니다.');
+  const r = await api('/ai', {
+    method: 'POST',
+    body: JSON.stringify({
+      provider: aiCfg.provider,
+      key: aiCfg.key,
+      model: aiCfg.model || undefined,
+      task,
+      ...payload,
+    }),
+  });
+  return r.result;
+}
+
+function openAiSettings() {
+  openPanel('AI 설정', (body) => {
+    const intro = el('div', 'set-section');
+    intro.appendChild(el('div', 'set-title', '내 API 키로 AI 기능 켜기'));
+    intro.appendChild(el('p', 'choice-hint',
+      '키는 이 기기에만 저장됩니다. AI 호출 때만 서버를 거쳐 가고, 서버는 저장하지 않습니다. '
+      + '설정하지 않아도 앱은 지금처럼 동작합니다.'));
+    body.appendChild(intro);
+
+    const status = el('p', 'placeholder', '불러오는 중…');
+    body.appendChild(status);
+
+    aiProviderList().then((provs) => {
+      status.remove();
+
+      const psec = el('div', 'set-section');
+      psec.appendChild(el('div', 'set-title', '제공자'));
+      const row = el('div', 'segrow');
+      for (const [id, p] of Object.entries(provs)) {
+        const b = el('button', 'seg' + (aiCfg.provider === id ? ' on' : ''), p.label);
+        b.addEventListener('click', () => {
+          aiCfg.provider = id;
+          aiCfg.model = '';
+          saveAi();
+          openAiSettings();
+        });
+        row.appendChild(b);
+      }
+      psec.appendChild(row);
+      body.appendChild(psec);
+
+      const cur = provs[aiCfg.provider] || provs.claude;
+
+      const ksec = el('div', 'set-section');
+      ksec.appendChild(el('div', 'set-title', `${cur.label} API 키`));
+      const kin = el('input', 'in');
+      kin.type = 'password';
+      kin.autocomplete = 'off';
+      kin.placeholder = cur.keyHint;
+      kin.value = aiCfg.key;
+      kin.addEventListener('change', () => {
+        aiCfg.key = kin.value.trim();
+        saveAi();
+      });
+      ksec.appendChild(kin);
+      const link = el('a', 'choice-hint', `${cur.label} 키 발급받기 →`);
+      link.href = cur.docs;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.style.display = 'block';
+      link.style.marginTop = '6px';
+      ksec.appendChild(link);
+      body.appendChild(ksec);
+
+      const msec = el('div', 'set-section');
+      msec.appendChild(el('div', 'set-title', '모델'));
+      const mrow = el('div', 'segrow');
+      for (const m of cur.models) {
+        const on = (aiCfg.model || cur.defaultModel) === m;
+        const b = el('button', 'seg' + (on ? ' on' : ''), m);
+        b.addEventListener('click', () => { aiCfg.model = m; saveAi(); openAiSettings(); });
+        mrow.appendChild(b);
+      }
+      msec.appendChild(mrow);
+      msec.appendChild(el('p', 'choice-hint',
+        '작은 모델이 싸고 빠릅니다. 기사 100건 거르는 데 몇 원 수준입니다.'));
+      body.appendChild(msec);
+
+      const test = el('button', 'primary', '연결 확인');
+      test.style.width = '100%';
+      const tstat = el('p', 'placeholder', '');
+      test.addEventListener('click', async () => {
+        aiCfg.key = kin.value.trim();
+        saveAi();
+        if (!aiCfg.key) { tstat.textContent = '키를 입력하세요.'; return; }
+        test.disabled = true;
+        tstat.textContent = '확인 중…';
+        try {
+          // The cheapest task that still proves the key works end to end.
+          const r = await aiCall('keywords', { issue: '테스트' });
+          tstat.textContent = `✓ ${cur.label} 연결됨 (예: ${(r.any || []).slice(0, 3).join(', ')})`;
+        } catch (e) {
+          tstat.textContent = `✕ ${e.message}`;
+        }
+        test.disabled = false;
+      });
+      body.appendChild(test);
+      body.appendChild(tstat);
+
+      if (aiCfg.key) {
+        const clear = el('button', 'add-dashed', '✕ 키 삭제');
+        clear.addEventListener('click', () => {
+          confirmSheet('저장된 API 키를 지울까요?', '✕ 삭제', () => {
+            aiCfg.key = '';
+            saveAi();
+            openAiSettings();
+          });
+        });
+        body.appendChild(clear);
+      }
+
+      const what = el('div', 'set-section');
+      what.appendChild(el('div', 'set-title', '무엇에 쓰이나'));
+      for (const [t, d] of [
+        ['◌ 관련 없는 기사 걸러내기', '키워드만 겹치고 주제가 다른 기사를 타임라인에서 제거합니다.'],
+        ['◌ 흐름 요약', '타임라인을 읽고 사건이 어떻게 전개됐는지 정리합니다.'],
+        ['◌ 키워드 제안', '이슈 이름만 주면 적절한 추적 키워드를 만들어 줍니다.'],
+      ]) {
+        const r = el('div', 'set-row');
+        const tx = el('div', 'choice-tx');
+        tx.appendChild(el('span', 'choice-label', t));
+        tx.appendChild(el('span', 'choice-hint', d));
+        r.appendChild(tx);
+        what.appendChild(r);
+      }
+      body.appendChild(what);
+    }).catch((e) => {
+      status.textContent = `AI 기능을 쓸 수 없습니다: ${e.message}`;
+    });
+  });
+}
+
+// Runs the collected timeline past the model and drops what does not belong.
+// Removals go through removeEvent so they are remembered — the next sweep will
+// not bring the same articles back.
+function openAiFilter(tracker) {
+  openPanel('관련 없는 기사 정리', (body) => {
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', tracker.name));
+
+    const linked = (tracker.events || []).filter((e) => !e.note);
+    sec.appendChild(el('p', 'choice-hint',
+      `타임라인의 기사 ${linked.length}건을 AI 가 읽고, 이 이슈와 무관한 것을 골라냅니다. `
+      + '무엇을 지울지 먼저 보여주고, 확인을 눌러야 실제로 지웁니다.'));
+    body.appendChild(sec);
+
+    if (!aiReady()) {
+      const go = el('button', 'primary', 'AI 설정하기');
+      go.style.width = '100%';
+      go.addEventListener('click', () => openAiSettings());
+      body.appendChild(go);
+      return;
+    }
+    if (!linked.length) {
+      body.appendChild(el('p', 'placeholder', '기사가 없습니다.'));
+      return;
+    }
+
+    const status = el('p', 'placeholder', '');
+    const list = el('div', 'pick-list');
+    const run = el('button', 'primary', '검사 시작');
+    run.style.width = '100%';
+
+    run.addEventListener('click', async () => {
+      run.disabled = true;
+      status.textContent = 'AI 가 읽는 중…';
+      list.textContent = '';
+      try {
+        // One call per 100 so a long timeline neither hits the endpoint cap nor
+        // asks the model to hold more than it reads well.
+        const drop = [];
+        for (let i = 0; i < linked.length; i += 100) {
+          const batch = linked.slice(i, i + 100);
+          status.textContent = `AI 가 읽는 중… ${i + batch.length}/${linked.length}`;
+          const r = await aiCall('filter', {
+            issue: tracker.name,
+            keywords: [...(tracker.all || []), ...(tracker.any || [])],
+            articles: batch.map((e) => ({ title: e.title })),
+          });
+          const keep = new Set(r.keep || []);
+          batch.forEach((e, k) => { if (!keep.has(k)) drop.push(e); });
+        }
+
+        if (!drop.length) {
+          status.textContent = '무관한 기사가 없습니다. 그대로 두면 됩니다.';
+          run.textContent = '다시 검사';
+          run.disabled = false;
+          return;
+        }
+
+        status.textContent = `${drop.length}건이 이 이슈와 무관해 보입니다.`;
+        for (const e of drop) {
+          const row = el('div', 'pick-row');
+          const tx = el('div', 'pick-tx');
+          tx.appendChild(el('div', 'pick-title', e.title));
+          tx.appendChild(el('div', 'pick-meta', [e.date, e.source].filter(Boolean).join(' · ')));
+          row.appendChild(tx);
+          list.appendChild(row);
+        }
+
+        run.textContent = `✕ ${drop.length}건 삭제`;
+        run.disabled = false;
+        run.onclick = () => {
+          confirmSheet(`${drop.length}건을 타임라인에서 지웁니다`, '✕ 삭제', () => {
+            for (const e of drop) removeEvent(tracker, e);
+            rebuildPages();
+            openTrackerTimeline(tracker, `AI 가 ${drop.length}건을 정리했습니다.`);
+          });
+        };
+      } catch (e) {
+        status.textContent = `실패: ${e.message}`;
+        run.disabled = false;
+      }
+    });
+
+    body.appendChild(run);
+    body.appendChild(status);
+    body.appendChild(list);
+  });
+}
+
+// Reads the timeline back as a sequence rather than a list — the thing the
+// tracker was for. Not stored: it is cheap to regenerate and would go stale.
+function openAiSummary(tracker) {
+  openPanel('흐름 요약', (body) => {
+    if (!aiReady()) {
+      body.appendChild(el('p', 'choice-hint', 'AI 키가 필요합니다.'));
+      const go = el('button', 'primary', 'AI 설정하기');
+      go.style.width = '100%';
+      go.addEventListener('click', () => openAiSettings());
+      body.appendChild(go);
+      return;
+    }
+
+    const events = (tracker.events || []).filter((e) => !e.note)
+      .slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (!events.length) {
+      body.appendChild(el('p', 'placeholder', '요약할 기사가 없습니다.'));
+      return;
+    }
+
+    const status = el('p', 'placeholder', 'AI 가 읽는 중…');
+    body.appendChild(status);
+    const out = el('div');
+    body.appendChild(out);
+
+    aiCall('summary', {
+      issue: tracker.name,
+      events: events.slice(-200).map((e) => ({ date: e.date, title: e.title })),
+    }).then((r) => {
+      status.remove();
+      if (r.headline) {
+        const h = el('div', 'set-section');
+        h.appendChild(el('div', 'set-title', r.headline));
+        out.appendChild(h);
+      }
+      if (r.phases && r.phases.length) {
+        const tl = el('div', 'tl');
+        r.phases.forEach((ph, i) => {
+          const row = el('div', 'tl-day');
+          const rail = el('div', 'tl-rail');
+          rail.appendChild(el('div', 'tl-dot'));
+          if (i < r.phases.length - 1) rail.appendChild(el('div', 'tl-line'));
+          row.appendChild(rail);
+          const col = el('div', 'tl-body');
+          const card = el('div', 'tl-card');
+          const head = el('div', 'tl-head');
+          head.appendChild(el('span', 'tl-date', ph.date));
+          card.appendChild(head);
+          card.appendChild(el('div', 'pick-title', ph.what));
+          col.appendChild(card);
+          row.appendChild(col);
+          tl.appendChild(row);
+        });
+        out.appendChild(tl);
+      }
+      if (r.now) {
+        const n = el('div', 'set-section');
+        n.appendChild(el('div', 'set-title', '현재'));
+        n.appendChild(el('p', 'choice-hint', r.now));
+        out.appendChild(n);
+      }
+      out.appendChild(el('p', 'choice-hint',
+        `기사 ${events.length}건을 읽고 정리했습니다. 저장하지 않으니 다시 열면 새로 만듭니다.`));
+    }).catch((e) => {
+      status.textContent = `실패: ${e.message}`;
+    });
+  });
+}
+
 // ---------- backup ----------
 
 // Everything lives in this device's localStorage, so clearing site data — or
@@ -4212,6 +4552,17 @@ function openSettings() {
     abtn.addEventListener('click', () => openLogin());
     acc.appendChild(abtn);
     body.appendChild(acc);
+
+    const ai = el('div', 'set-section');
+    ai.appendChild(el('div', 'set-title', 'AI (선택)'));
+    ai.appendChild(el('p', 'choice-hint', aiReady()
+      ? `${aiCfg.provider} 키가 설정되어 있습니다. 트래커에서 기사 정리·흐름 요약을 쓸 수 있습니다.`
+      : '내 API 키를 넣으면 관련 없는 기사를 걸러내고 흐름을 요약할 수 있습니다. '
+        + 'Claude·ChatGPT·Gemini·Grok 중 하나. 넣지 않아도 앱은 그대로 동작합니다.'));
+    const aibtn = el('button', 'add-dashed', aiReady() ? 'AI 설정 관리' : '✦ AI 키 등록');
+    aibtn.addEventListener('click', () => openAiSettings());
+    ai.appendChild(aibtn);
+    body.appendChild(ai);
 
     const bak = el('div', 'set-section');
     bak.appendChild(el('div', 'set-title', '백업 · 복원'));

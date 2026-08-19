@@ -92,6 +92,21 @@ export class HttpError extends Error {
   }
 }
 
+// For endpoints that never touch the database. The AI relay is one: the key
+// comes from the caller and nothing is persisted, so a missing D1 binding is
+// irrelevant to it and refusing the request over one would be wrong.
+export function plainHandler(fn) {
+  return async (ctx) => {
+    try {
+      return await fn(ctx);
+    } catch (e) {
+      if (e instanceof HttpError) return err(e.message, e.status);
+      console.error(e);
+      return err('서버 오류가 발생했습니다.', 500);
+    }
+  };
+}
+
 // Every handler is wrapped so a thrown HttpError becomes its status and
 // anything else becomes a 500 without leaking a stack trace to the client.
 export function handler(fn) {
