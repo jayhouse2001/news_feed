@@ -3307,6 +3307,132 @@ function applySettingChange() {
   openSettings();
 }
 
+// ---------- backup ----------
+
+// Everything lives in this device's localStorage, so clearing site data — or
+// iOS evicting storage from an app left unused — takes the trackers with it.
+// A file the user holds is the only recovery path that does not depend on the
+// browser, and it has to exist before anything migrates data anywhere.
+const BACKUP_VERSION = 1;
+
+function backupBlob() {
+  return JSON.stringify({
+    app: 'news-feed',
+    version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    settings: S,
+  }, null, 2);
+}
+
+function backupFilename() {
+  return `news-feed-backup-${dayOf(null)}.json`;
+}
+
+function downloadBackup() {
+  const blob = new Blob([backupBlob()], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = backupFilename();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // revoking immediately can cancel the download on some browsers
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+// Restoring replaces the whole settings object, so anything the running app
+// still holds a reference to has to be re-read. Reloading is simpler and
+// safer than reconciling every module-level cache by hand.
+function applyBackup(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('파일을 읽을 수 없습니다. JSON 형식이 아닙니다.');
+  }
+  if (!data || data.app !== 'news-feed' || !data.settings) {
+    throw new Error('이 앱의 백업 파일이 아닙니다.');
+  }
+  if (data.version > BACKUP_VERSION) {
+    throw new Error('더 새로운 버전의 백업입니다. 앱을 새로고침한 뒤 다시 시도하세요.');
+  }
+  const s = data.settings;
+  if (!Array.isArray(s.trackers)) throw new Error('백업에 트래커 정보가 없습니다.');
+  return {
+    settings: s,
+    trackers: s.trackers.length,
+    events: s.trackers.reduce((n, t) => n + ((t.events || []).length), 0),
+    saved: (s.saved || []).length,
+    exportedAt: data.exportedAt || null,
+  };
+}
+
+function openBackupPanel() {
+  openPanel('백업 · 복원', (body) => {
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', '내보내기'));
+    const evCount = S.trackers.reduce((n, t) => n + ((t.events || []).length), 0);
+    sec.appendChild(el('p', 'choice-hint',
+      `이슈 ${S.trackers.length}개 · 기사 ${evCount}건 · 스크랩 ${S.saved.length}건과 `
+      + '모든 설정을 파일 하나로 저장합니다.'));
+    const dl = el('button', 'primary', '⭳ 백업 파일 저장');
+    dl.style.width = '100%';
+    dl.addEventListener('click', () => {
+      downloadBackup();
+      toast('백업 파일을 저장했습니다.');
+    });
+    sec.appendChild(dl);
+
+    // iOS in standalone mode often ignores a download; copying gives the user
+    // something they can paste into a note or a mail to themselves
+    const cp = el('button', 'add-dashed', '⧉ 클립보드로 복사');
+    cp.addEventListener('click', async () => {
+      const ok = await copyText(backupBlob());
+      toast(ok ? '백업 내용을 복사했습니다.' : '복사에 실패했습니다.');
+    });
+    sec.appendChild(cp);
+    body.appendChild(sec);
+
+    const rs = el('div', 'set-section');
+    rs.appendChild(el('div', 'set-title', '복원'));
+    rs.appendChild(el('p', 'choice-hint',
+      '백업 파일을 고르면 현재 이슈·스크랩·설정을 모두 덮어씁니다. 되돌릴 수 없습니다.'));
+
+    const file = el('input', 'in');
+    file.type = 'file';
+    file.accept = 'application/json,.json';
+    rs.appendChild(file);
+
+    const status = el('p', 'placeholder', '');
+    rs.appendChild(status);
+
+    file.addEventListener('change', async () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      let info;
+      try {
+        info = applyBackup(await f.text());
+      } catch (err) {
+        status.textContent = `✕ ${err.message}`;
+        file.value = '';
+        return;
+      }
+      const when = info.exportedAt ? ` (${dayOf(info.exportedAt)} 백업)` : '';
+      confirmSheet(
+        `이슈 ${info.trackers}개 · 기사 ${info.events}건으로 덮어씁니다${when}`,
+        '⭱ 복원하기',
+        () => {
+          localStorage.setItem(LS_KEY, JSON.stringify(info.settings));
+          location.reload();
+        }
+      );
+      file.value = '';
+    });
+    body.appendChild(rs);
+  });
+}
+
 function openSettings() {
   openPanel('설정', (body) => {
     body.appendChild(knownSourcesDatalist());
@@ -3408,6 +3534,15 @@ function openSettings() {
     if (!S.preferredSources.length) psSec.appendChild(el('p', 'w-empty', '없음'));
     psSec.appendChild(addRow('언론사 이름', (v) => addUnique(S.preferredSources, v), 'known-sources'));
     body.appendChild(psSec);
+
+    const bak = el('div', 'set-section');
+    bak.appendChild(el('div', 'set-title', '백업 · 복원'));
+    bak.appendChild(el('p', 'choice-hint',
+      '설정과 트래커는 이 기기에만 저장됩니다. 브라우저 데이터를 지우면 사라지니 가끔 백업해 두세요.'));
+    const bbtn = el('button', 'add-dashed', '⭳ 백업 · 복원 열기');
+    bbtn.addEventListener('click', () => openBackupPanel());
+    bak.appendChild(bbtn);
+    body.appendChild(bak);
   });
 }
 
