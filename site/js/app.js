@@ -1025,22 +1025,88 @@ function trimParticle(w) {
   return w;
 }
 
-// Picks the words a reader would call "what this story is about". Used to seed
-// a tracker straight from an article, so the user never types a keyword.
-function suggestKeywords(title, limit = 4) {
-  const words = (title || '')
+// Words that describe an action or a degree rather than a subject. They pass
+// every shape test — not verbs by ending, not stop words, often rare — yet a
+// tracker keyed on 완전 or 부인 collects nothing but noise. Collected from what
+// a rarity ranking wrongly preferred over 트럼프 and 이란.
+const WEAK_WORDS = new Set([
+  '완전', '부인', '장악', '주장', '확대', '축소', '증가', '감소', '강화', '추진',
+  '검토', '논의', '결정', '시작', '종료', '공개', '제기', '지적', '요구', '촉구',
+  '비판', '반발', '우려', '기대', '전환', '개최', '참석', '방문', '언급', '거부',
+  '수용', '전례', '이제', '다시', '모두', '일부', '전체', '최대', '최소', '본격',
+  '대규모', '소규모', '사실', '문제', '이유', '방안', '수준', '규모', '내용',
+  '결과', '효과', '영향', '필요', '중요', '주요', '새로', '향해', '위한', '없는',
+]);
+
+function titleWords(title) {
+  return (title || '')
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter((w) => !VERB_TAIL.test(w))
     .map(trimParticle)
     .filter((w) => w.length >= 2 && !STOP_WORDS.has(w.toLowerCase()) && !/^\d+$/.test(w));
-  const out = [];
-  for (const w of words) {
-    if (!out.some((x) => x.toLowerCase() === w.toLowerCase())) out.push(w);
-    if (out.length >= limit) break;
+}
+
+// How many loaded articles mention each word. A word in a quarter of the feed
+// cannot identify a story; one in three or four articles can.
+let dfCache = null;
+
+function documentFrequency() {
+  if (dfCache) return dfCache;
+  const df = new Map();
+  let total = 0;
+  for (const cat of newsData.categories) {
+    for (const it of cat.items) {
+      total++;
+      for (const w of new Set(titleWords(it.title))) df.set(w, (df.get(w) || 0) + 1);
+    }
   }
+  dfCache = { df, total: total || 1 };
+  return dfCache;
+}
+
+// Ranks a headline's words by how well each would identify this story.
+// Frequency alone is not enough — measured, it prefers 완전 over 트럼프, because
+// rare-and-meaningless beats common-and-central. So shape and position count
+// too, and the words that are only ever noise are excluded outright.
+function rankKeywords(title) {
+  const { df, total } = documentFrequency();
+  const seen = new Set();
+  const out = [];
+  titleWords(title).forEach((w, i) => {
+    const key = w.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    const n = df.get(w) || 0;
+    let score = 0;
+    if (WEAK_WORDS.has(w)) score -= 100;
+    // Counted, not proportioned. A share of the corpus reads as tiny for words
+    // that are in fact everywhere: 서울 appears in 26 of 2016 articles — 1.3%,
+    // which any percentage cut waves through, while plainly being a place name
+    // too broad to track. Absolute counts are what separate 호르무즈 (3) from
+    // 서울 (26) at any feed size.
+    if (n >= 2 && n <= 8) score += 3;
+    else if (n <= 1) score += 1;
+    else if (n <= 15) score += 1;
+    else score -= 3;
+    // Latin letters or digits inside a Korean headline nearly always mark a
+    // name: LAFC, iPhone, G7.
+    if (/^[A-Za-z][A-Za-z0-9.\-]*$/.test(w)) score += 2;
+    if (w.length >= 3) score += 1;
+    if (i <= 1) score += 1;   // headlines lead with their subject
+    out.push({ word: w, score, n, at: i });
+  });
+  out.sort((a, b) => b.score - a.score || a.at - b.at);
   return out;
+}
+
+// The words switched on by default. Deliberately few: two good keywords
+// collect a tighter timeline than four mediocre ones, and the rest of the
+// headline stays one tap away in the editor.
+function suggestKeywords(title, limit = 2) {
+  return rankKeywords(title).filter((c) => c.score > 0).slice(0, limit)
+    .sort((a, b) => a.at - b.at).map((c) => c.word);
 }
 
 // Cross-source dedup. The same story reaches a timeline three ways — the
@@ -2894,38 +2960,66 @@ function trackFromArticle(item) {
     nsec.appendChild(nameIn);
     body.appendChild(nsec);
 
+    // Every word of the headline is offered, not just the chosen two: which
+    // word names the story is a judgement a reader makes instantly and the
+    // scoring only guesses at. Tapping costs less than typing, so the ranking
+    // decides what starts switched on, never what is available.
     const ksec = el('div', 'set-section');
     ksec.appendChild(el('div', 'set-title', '추적 키워드'));
+    const chosen = new Set(draft.any);
+    const candidates = rankKeywords(item.title);
     const box = el('div', 'chipbox');
+    const count = el('p', 'choice-hint', '');
+
+    const syncDraft = () => {
+      draft.any = [...chosen];
+      draft.kr = draft.any.slice(0, 3).join(' ');
+    };
+
     const redraw = () => {
       box.textContent = '';
-      if (!draft.any.length) {
-        box.appendChild(el('span', 'w-empty', '없음 — 최소 하나는 필요합니다'));
-        return;
-      }
-      draft.any.forEach((w, i) => {
-        const chip = el('span', 'x-chip');
-        chip.appendChild(el('span', null, w));
-        const x = el('button', 'x', '✕');
-        x.setAttribute('aria-label', `${w} 삭제`);
-        x.addEventListener('click', () => { draft.any.splice(i, 1); redraw(); });
-        chip.appendChild(x);
+      // headline order reads naturally; the ranking only picked the defaults
+      for (const c of candidates.slice().sort((a, b) => a.at - b.at)) {
+        const on = chosen.has(c.word);
+        const chip = el('button', 'kw-chip' + (on ? ' on' : ''), c.word);
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        chip.addEventListener('click', () => {
+          if (chosen.has(c.word)) chosen.delete(c.word);
+          else chosen.add(c.word);
+          syncDraft();
+          redraw();
+        });
         box.appendChild(chip);
-      });
+      }
+      // hand-typed words are not in the headline, so they get their own chips
+      for (const w of chosen) {
+        if (candidates.some((c) => c.word === w)) continue;
+        const chip = el('button', 'kw-chip on', w);
+        chip.setAttribute('aria-pressed', 'true');
+        chip.addEventListener('click', () => { chosen.delete(w); syncDraft(); redraw(); });
+        box.appendChild(chip);
+      }
+      count.textContent = chosen.size
+        ? `${chosen.size}개 선택 — 이 중 하나라도 제목에 있으면 수집합니다.`
+        : '최소 하나는 선택해야 합니다.';
     };
-    redraw();
+
     ksec.appendChild(box);
+    ksec.appendChild(count);
     ksec.appendChild(el('p', 'choice-hint',
-      '제목에서 뽑은 단어입니다. 하나라도 제목에 있으면 수집합니다. 너무 넓으면 빼고, 빠진 게 있으면 더하세요.'));
+      '제목의 단어를 눌러 켜고 끕니다. 진한 것이 켜진 상태입니다. '
+      + "너무 흔한 단어(예: '서울')를 켜면 무관한 기사가 섞입니다."));
+
     const form = el('div', 'add-form');
     const kin = el('input', 'in');
-    kin.placeholder = '키워드 추가';
+    kin.placeholder = '제목에 없는 키워드 추가';
     const kadd = el('button', 'primary', '추가');
     const commit = () => {
       const v = kin.value.trim();
       if (!v) return;
-      addUnique(draft.any, v);
+      chosen.add(v);
       kin.value = '';
+      syncDraft();
       redraw();
     };
     kadd.addEventListener('click', commit);
@@ -2933,6 +3027,7 @@ function trackFromArticle(item) {
     form.appendChild(kin);
     form.appendChild(kadd);
     ksec.appendChild(form);
+    redraw();
     body.appendChild(ksec);
 
     const fsec = el('div', 'set-section');

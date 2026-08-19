@@ -471,6 +471,28 @@ button:disabled { opacity: .35; cursor: default; }
   color: #fff;
 }
 
+/* A keyword candidate: tap to include it in the rule. Off is an outline so
+   the difference from on is fill, not a checkbox the eye has to find. */
+.kw-chip {
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+
+.kw-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.kw-chip:active { opacity: .7; }
+
 .pick-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; }
 
 .pick-row {
