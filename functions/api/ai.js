@@ -148,7 +148,7 @@ export const onRequestPost = plainHandler(async ({ request }) => {
 export const onRequestGet = plainHandler(async () => json({
   providers: Object.fromEntries(
     Object.entries(PROVIDERS).map(([k, v]) => [k, {
-      label: v.label, docs: v.docs, keyHint: v.keyHint,
+      label: v.label, docs: v.docs, login: v.login, keyHint: v.keyHint,
       models: v.models, defaultModel: v.defaultModel,
     }])
   ),

@@ -4079,13 +4079,22 @@ function openAiSettings() {
         saveAi();
       });
       ksec.appendChild(kin);
-      const link = el('a', 'choice-hint', `${cur.label} 키 발급받기 →`);
-      link.href = cur.docs;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.style.display = 'block';
-      link.style.marginTop = '6px';
-      ksec.appendChild(link);
+      // Two links, because the key page silently assumes you are signed in as
+      // the right account — and these sites pick up whichever account the
+      // browser was already holding, which is not always the one you meant.
+      const mkLink = (text, href) => {
+        const a = el('a', 'choice-hint', text);
+        a.href = href;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.style.display = 'block';
+        a.style.marginTop = '6px';
+        return a;
+      };
+      ksec.appendChild(mkLink(`${cur.label} 키 발급받기 →`, cur.docs));
+      if (cur.login) {
+        ksec.appendChild(mkLink(`${cur.label} 로그인 / 계정 바꾸기 →`, cur.login));
+      }
       body.appendChild(ksec);
 
       const msec = el('div', 'set-section');

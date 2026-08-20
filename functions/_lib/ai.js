@@ -5,10 +5,19 @@
 // in the request and is used once; nothing is stored, logged, or written to D1.
 // That is the whole reason this file exists rather than fetch() in the app.
 
+// Two links per provider, because they answer different questions. The key
+// page assumes you are already signed in as the right account; the login page
+// is where you go when the site picked up whichever account the browser
+// happened to be holding.
+// Model IDs are copied from each provider docs page, never inferred — a wrong
+// one is invisible until a call fails. Cheapest first in every list: filtering
+// headlines is not a reasoning task, and the small models do it for a fraction
+// of the price. Checked 2026-08-20.
 export const PROVIDERS = {
   claude: {
     label: 'Claude',
-    docs: 'https://console.anthropic.com/settings/keys',
+    docs: 'https://platform.claude.com/settings/keys',
+    login: 'https://platform.claude.com/login',
     keyHint: 'sk-ant-…',
     models: ['claude-haiku-4-5', 'claude-sonnet-5', 'claude-opus-5'],
     defaultModel: 'claude-haiku-4-5',
@@ -16,23 +25,26 @@ export const PROVIDERS = {
   openai: {
     label: 'ChatGPT',
     docs: 'https://platform.openai.com/api-keys',
+    login: 'https://auth.openai.com/log-in',
     keyHint: 'sk-…',
-    models: ['gpt-4o-mini', 'gpt-4o'],
-    defaultModel: 'gpt-4o-mini',
+    models: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol'],
+    defaultModel: 'gpt-5.6-luna',
   },
   gemini: {
     label: 'Gemini',
     docs: 'https://aistudio.google.com/apikey',
+    login: 'https://accounts.google.com/ServiceLogin?continue=https://aistudio.google.com/apikey',
     keyHint: 'AIza…',
-    models: ['gemini-2.0-flash', 'gemini-2.5-flash'],
-    defaultModel: 'gemini-2.0-flash',
+    models: ['gemini-3.5-flash-lite', 'gemini-3.7-flash', 'gemini-3.5-flash'],
+    defaultModel: 'gemini-3.5-flash-lite',
   },
   grok: {
     label: 'Grok',
-    docs: 'https://console.x.ai',
+    docs: 'https://console.x.ai/team/default/api-keys',
+    login: 'https://accounts.x.ai/sign-in',
     keyHint: 'xai-…',
-    models: ['grok-3-mini', 'grok-3'],
-    defaultModel: 'grok-3-mini',
+    models: ['grok-4.3', 'grok-4.5', 'grok-4.6'],
+    defaultModel: 'grok-4.3',
   },
 };
 
