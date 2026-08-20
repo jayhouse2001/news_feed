@@ -50,6 +50,10 @@ export const PROVIDERS = {
 
 // Each provider gets a request builder and a reply reader. Three of the four
 // speak the OpenAI chat shape; Claude and Gemini each want their own.
+//
+// `search` turns on the provider's own web search. Verified against each docs
+// page 2026-08-20 — the four disagree on everything: the field name, whether it
+// sits in `tools`, and in OpenAI's case which endpoint answers at all.
 const CALLERS = {
   claude: {
     url: () => 'https://api.anthropic.com/v1/messages',
@@ -58,25 +62,60 @@ const CALLERS = {
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
     }),
-    body: (model, system, prompt, maxTokens) => ({
+    body: (model, system, prompt, maxTokens, search) => ({
       model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content: prompt }],
+      // allowed_callers: direct — dynamic filtering runs the search inside code
+      // execution, which needs a model that supports programmatic tool calling
+      // and returns a shape this reader does not expect.
+      ...(search ? {
+        tools: [{
+          type: 'web_search_20250305',
+          name: 'web_search',
+          max_uses: search.maxUses || 12,
+        }],
+      } : {}),
     }),
     read: (j) => (j.content || []).filter((b) => b.type === 'text')
       .map((b) => b.text).join(''),
   },
 
   openai: {
-    url: () => 'https://api.openai.com/v1/chat/completions',
+    // Web search lives on /v1/responses; chat/completions only has it through
+    // a separate search-specific model. So a searching call goes to a different
+    // endpoint with a different body and a different reply shape.
+    url: (model, key, search) => (search
+      ? 'https://api.openai.com/v1/responses'
+      : 'https://api.openai.com/v1/chat/completions'),
     headers: (key) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }),
-    body: (model, system, prompt, maxTokens) => ({
-      model,
-      max_completion_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-    }),
-    read: (j) => ((j.choices || [])[0] || {}).message?.content || '',
+    body: (model, system, prompt, maxTokens, search) => (search
+      ? {
+        model,
+        instructions: system,
+        input: prompt,
+        max_output_tokens: maxTokens,
+        tools: [{ type: 'web_search' }],
+      }
+      : {
+        model,
+        max_completion_tokens: maxTokens,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+      }),
+    read: (j) => {
+      // chat/completions
+      const chat = ((j.choices || [])[0] || {}).message?.content;
+      if (chat) return chat;
+      // responses: the text sits in an output array alongside tool-call items
+      const items = j.output || j.output_items || [];
+      return items
+        .filter((it) => it.type === 'message')
+        .flatMap((it) => it.content || [])
+        .filter((c) => c.type === 'output_text')
+        .map((c) => c.text || '')
+        .join('');
+    },
   },
 
   gemini: {
@@ -85,22 +124,32 @@ const CALLERS = {
     url: (model, key) => 'https://generativelanguage.googleapis.com/v1beta/models/'
       + `${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
     headers: () => ({ 'Content-Type': 'application/json' }),
-    body: (model, system, prompt, maxTokens) => ({
+    body: (model, system, prompt, maxTokens, search) => ({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { maxOutputTokens: maxTokens, temperature: 0 },
+      ...(search ? { tools: [{ google_search: {} }] } : {}),
     }),
     read: (j) => (((j.candidates || [])[0] || {}).content?.parts || [])
       .map((p) => p.text || '').join(''),
   },
 
   grok: {
+    // Grok keeps search on chat/completions behind search_parameters, so unlike
+    // OpenAI it does not need a second endpoint.
     url: () => 'https://api.x.ai/v1/chat/completions',
     headers: (key) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }),
-    body: (model, system, prompt, maxTokens) => ({
+    body: (model, system, prompt, maxTokens, search) => ({
       model,
       max_tokens: maxTokens,
       messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+      ...(search ? {
+        search_parameters: {
+          mode: 'on',
+          return_citations: true,
+          max_search_results: search.maxUses || 12,
+        },
+      } : {}),
     }),
     read: (j) => ((j.choices || [])[0] || {}).message?.content || '',
   },
@@ -117,17 +166,19 @@ function readError(status, body) {
   return { kind: 'other', msg };
 }
 
-export async function callAi({ provider, key, model, system, prompt, maxTokens = 2000 }) {
+export async function callAi({ provider, key, model, system, prompt, maxTokens = 2000, search = null }) {
   const c = CALLERS[provider];
   if (!c) throw new Error(`알 수 없는 제공자: ${provider}`);
   if (!key) throw new Error('API 키가 없습니다.');
 
   const m = model || PROVIDERS[provider].defaultModel;
-  const res = await fetch(c.url(m, key), {
+  const res = await fetch(c.url(m, key, search), {
     method: 'POST',
     headers: c.headers(key),
-    body: JSON.stringify(c.body(m, system, prompt, maxTokens)),
-    signal: AbortSignal.timeout(60000),
+    body: JSON.stringify(c.body(m, system, prompt, maxTokens, search)),
+    // A search turn runs several queries server-side before answering, so it
+    // needs far longer than a plain completion.
+    signal: AbortSignal.timeout(search ? 180000 : 60000),
   });
 
   const text = await res.text();

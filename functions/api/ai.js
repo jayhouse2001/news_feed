@@ -73,6 +73,68 @@ const TASKS = {
     },
   },
 
+  // The one task that reaches outside: the model searches the web and comes
+  // back with dated articles, so an issue can be tracked from a sentence
+  // instead of a keyword rule. Every provider returns real source URLs with
+  // its search results, which is what makes this usable — a fabricated link is
+  // worse than no entry.
+  //
+  // Without a start date the model decides where the story begins, which is
+  // the point: the reader usually does not know either.
+  timeline: {
+    maxTokens: 8000,
+    search: { maxUses: 14 },
+    system: '당신은 뉴스 아카이브 조사원입니다. 웹 검색으로 실제 기사를 찾아'
+      + ' 사건의 전개를 날짜순으로 정리합니다.'
+      + ' 반드시 검색으로 확인한 실제 기사만 쓰고, 링크를 지어내지 마세요.'
+      + ' 찾지 못한 기간은 비워두세요. JSON만 출력합니다.',
+    build: ({ issue, from, to, perDay }) => [
+      `이슈: ${issue}`,
+      from ? `시작일: ${from}` : '시작일: 지정하지 않음 — 이 사건이 언제 시작됐는지 직접 판단해서 그 시점부터 정리하세요.',
+      `오늘: ${new Date().toISOString().slice(0, 10)}`,
+      '',
+      '웹에서 이 이슈의 기사를 검색해 사건 전개를 날짜순으로 정리하세요.',
+      '',
+      '조건:',
+      `- 국면이 바뀐 날만 고릅니다. 하루에 ${perDay || 2}건 이내.`,
+      '- 같은 사건을 다룬 기사가 여러 개면 하나만.',
+      '- 조용한 기간은 건너뜁니다. 매일 채우지 마세요.',
+      '- 전체 20~40개 항목이면 충분합니다.',
+      '- url 은 검색으로 확인한 실제 기사 주소여야 합니다. 확인 못 하면 그 항목을 빼세요.',
+      '',
+      '출력(JSON):',
+      '{"start":"YYYY-MM-DD","events":[',
+      '  {"date":"YYYY-MM-DD","title":"기사 제목","source":"언론사","url":"https://…"}',
+      ']}',
+    ].join('\n'),
+    parse: (text) => {
+      const j = extractJson(text);
+      const rows = Array.isArray(j.events) ? j.events : (Array.isArray(j) ? j : []);
+      const out = [];
+      const seen = new Set();
+      for (const e of rows) {
+        const date = String(e.date || '').slice(0, 10);
+        const title = String(e.title || '').trim();
+        const url = String(e.url || '').trim();
+        // A row without a real date, a title, or an http url is not an entry —
+        // it is the model filling the shape, and it would land in a timeline
+        // as an unopenable link.
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+        if (!title || !/^https?:\/\//.test(url)) continue;
+        if (seen.has(url)) continue;
+        seen.add(url);
+        out.push({ date, title: title.slice(0, 500), source: String(e.source || '').slice(0, 120), url });
+      }
+      out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+      return {
+        start: /^\d{4}-\d{2}-\d{2}$/.test(String(j.start || '')) ? j.start
+          : (out[0] ? out[0].date : null),
+        events: out,
+        dropped: rows.length - out.length,
+      };
+    },
+  },
+
   // Keyword rules are the part users get wrong, and the scoring only guesses.
   // Given the issue in plain words, a model proposes the rule instead.
   keywords: {
@@ -126,6 +188,7 @@ export const onRequestPost = plainHandler(async ({ request }) => {
       system: t.system,
       prompt: t.build(body),
       maxTokens: t.maxTokens,
+      search: t.search || null,
     });
   } catch (e) {
     if (e.kind === 'auth') throw new HttpError('API 키가 거부됐습니다. 키를 확인해 주세요.', 400);

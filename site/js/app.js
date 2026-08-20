@@ -480,6 +480,12 @@ function openItemSheet(item) {
     label: isSaved(item.link) ? '★ 스크랩에서 빼기' : '☆ 스크랩에 저장',
     onClick() { toggleSaved(item); },
   }];
+  if (aiReady()) {
+    actions.push({
+      label: '✦ 이 뉴스를 AI로 추적 (과거까지)',
+      onClick() { openAiIssue(item); },
+    });
+  }
   actions.push({
     label: '◷ 이 뉴스를 이슈로 추적',
     onClick() { trackFromArticle(item); },
@@ -3004,12 +3010,189 @@ function buildTrackerPage() {
     inner.appendChild(card);
   }
 
-  const add = el('button', 'add-dashed', '＋ 이슈 추가');
+  // With a key, the sentence-first path is the one that works; the keyword
+  // editor stays for anyone without one, and for tightening a rule by hand.
+  if (aiReady()) {
+    const aiAdd = el('button', 'add-dashed', '✦ AI로 이슈 추가 (이름만 적으면 됨)');
+    aiAdd.addEventListener('click', () => openAiIssue(null));
+    inner.appendChild(aiAdd);
+  }
+
+  const add = el('button', 'add-dashed',
+    aiReady() ? '＋ 직접 키워드로 추가' : '＋ 이슈 추가');
   add.addEventListener('click', () => openTrackerEditor(null));
   inner.appendChild(add);
 
   page.appendChild(inner);
   return page;
+}
+
+// Creating an issue from a sentence. With a key, the keyword rule stops being
+// something the reader has to compose: they say what the issue is and when it
+// started — or leave the date blank and let the search find the beginning —
+// and the model returns dated articles that land in the ordinary timeline.
+//
+// The rule is still written, from the model's own keyword suggestion, so the
+// half-hourly collection keeps the issue current afterwards without further
+// AI calls.
+function openAiIssue(seedItem) {
+  openPanel('AI로 이슈 추적', (body) => {
+    if (!aiReady()) {
+      body.appendChild(el('p', 'choice-hint',
+        'AI 키를 등록하면 이슈 이름만 적어도 과거 기사를 찾아 타임라인을 만들어 줍니다.'));
+      const go = el('button', 'primary', 'AI 설정하기');
+      go.style.width = '100%';
+      go.addEventListener('click', () => openAiSettings());
+      body.appendChild(go);
+      return;
+    }
+
+    const sec = el('div', 'set-section');
+    sec.appendChild(el('div', 'set-title', '무슨 이슈인가요'));
+    const nameIn = el('input', 'in');
+    nameIn.placeholder = '예: 미국-이란 전쟁';
+    if (seedItem) nameIn.value = seedItem.title.slice(0, 60);
+    sec.appendChild(nameIn);
+    sec.appendChild(el('p', 'choice-hint',
+      '한 줄로 적으면 됩니다. 키워드를 고를 필요 없습니다.'));
+    body.appendChild(sec);
+
+    const dsec = el('div', 'set-section');
+    dsec.appendChild(el('div', 'set-title', '언제부터'));
+    const fromIn = el('input', 'in');
+    fromIn.type = 'date';
+    // An article's own date is the natural anchor when the issue starts from
+    // one; otherwise blank, which asks the model to find the beginning.
+    if (seedItem) fromIn.value = dayOf(seedItem.pubDate);
+    dsec.appendChild(fromIn);
+
+    const quick = el('div', 'segrow');
+    const marks = [['6개월', 6], ['1년', 12], ['2년', 24]];
+    const paint = () => {
+      [...quick.children].forEach((b, i) => {
+        if (i < marks.length) b.classList.toggle('on', fromIn.value === monthsAgo(marks[i][1]));
+        else b.classList.toggle('on', !fromIn.value);
+      });
+    };
+    for (const [label, months] of marks) {
+      const b = el('button', 'seg', label);
+      b.addEventListener('click', () => { fromIn.value = monthsAgo(months); paint(); });
+      quick.appendChild(b);
+    }
+    const auto = el('button', 'seg', '알아서 찾기');
+    auto.addEventListener('click', () => { fromIn.value = ''; paint(); });
+    quick.appendChild(auto);
+    fromIn.addEventListener('change', paint);
+    paint();
+    dsec.appendChild(quick);
+    dsec.appendChild(el('p', 'choice-hint',
+      "비워두면 AI 가 이 사건이 언제 시작됐는지 판단해서 그 시점부터 정리합니다."));
+    body.appendChild(dsec);
+
+    const status = el('p', 'placeholder', '');
+    const preview = el('div', 'pick-list');
+
+    const go = el('button', 'primary', '✦ AI로 타임라인 만들기');
+    go.style.width = '100%';
+    go.addEventListener('click', async () => {
+      const name = nameIn.value.trim();
+      if (!name) { nameIn.focus(); return; }
+      go.disabled = true;
+      preview.textContent = '';
+      status.textContent = 'AI 가 웹에서 기사를 찾는 중… (1~2분 걸릴 수 있습니다)';
+
+      try {
+        const r = await aiCall('timeline', {
+          issue: name,
+          from: fromIn.value || undefined,
+          perDay: DEFAULT_PER_DAY,
+        });
+        if (!r.events.length) {
+          status.textContent = '기사를 찾지 못했습니다. 이슈 이름을 더 구체적으로 적어 보세요.';
+          go.disabled = false;
+          return;
+        }
+
+        // The rule comes from the model too, so the issue keeps collecting on
+        // its own after this one call.
+        status.textContent = '키워드를 정하는 중…';
+        let kw = { must: [], any: [] };
+        try {
+          kw = await aiCall('keywords', { issue: name, sample: r.events[0].title });
+        } catch {
+          // A missing rule only costs automatic updates, not the timeline.
+        }
+
+        const days = new Set(r.events.map((e) => e.date));
+        status.textContent = `기사 ${r.events.length}건 · ${days.size}일`
+          + (r.dropped ? ` (링크를 확인 못 한 ${r.dropped}건 제외)` : '')
+          + `. 아래를 확인하고 만드세요.`;
+
+        for (const e of r.events.slice(0, 8)) {
+          const row = el('div', 'pick-row');
+          const tx = el('div', 'pick-tx');
+          tx.appendChild(el('div', 'pick-title', e.title));
+          tx.appendChild(el('div', 'pick-meta', [e.date, e.source].filter(Boolean).join(' · ')));
+          row.appendChild(tx);
+          preview.appendChild(row);
+        }
+        if (r.events.length > 8) {
+          preview.appendChild(el('p', 'choice-hint', `… 외 ${r.events.length - 8}건`));
+        }
+
+        go.textContent = `＋ 이슈 만들기 (${r.events.length}건)`;
+        go.disabled = false;
+        go.onclick = async () => {
+          go.disabled = true;
+          const ts = new Date().toISOString();
+          const draft = {
+            id: `t-${Date.now()}`,
+            name,
+            all: kw.must || [],
+            any: (kw.any && kw.any.length) ? kw.any : [name.split(/\s+/)[0]],
+            kr: [...(kw.must || []), ...(kw.any || [])].slice(0, 3).join(' '),
+            en: '',
+            from: r.start || fromIn.value || monthsAgo(24),
+            status: 'active',
+            perDay: DEFAULT_PER_DAY,
+            allSources: false,
+            order: 'desc',
+            events: r.events.map((e) => ({
+              date: e.date, title: e.title, source: e.source,
+              url: e.url, coverage: 0, ai: true, addedAt: ts,
+            })),
+          };
+
+          if (serverBacked()) {
+            try {
+              const created = await createRemoteTracker(draft, null);
+              await uploadEvents(created, draft.events);
+              const full = await pullTimeline(created);
+              rebuildPages();
+              openTrackerTimeline(full, `AI 가 기사 ${draft.events.length}건을 찾았습니다.`);
+            } catch (err) {
+              status.textContent = `저장 실패: ${err.message}`;
+              go.disabled = false;
+            }
+            return;
+          }
+
+          S.trackers.push(draft);
+          save();
+          markTrackerSeen(draft);
+          rebuildPages();
+          openTrackerTimeline(draft, `AI 가 기사 ${draft.events.length}건을 찾았습니다.`);
+        };
+      } catch (e) {
+        status.textContent = `실패: ${e.message}`;
+        go.disabled = false;
+      }
+    });
+
+    body.appendChild(go);
+    body.appendChild(status);
+    body.appendChild(preview);
+  });
 }
 
 // Start an issue from the article being read: the headline supplies the name,
