@@ -4677,6 +4677,10 @@ function openSettings() {
   openPanel('설정', (body) => {
     body.appendChild(knownSourcesDatalist());
 
+    const ver = el('div', 'set-version');
+    ver.textContent = `버전 ${typeof APP_VERSION === 'string' ? APP_VERSION : '?'}`;
+    body.appendChild(ver);
+
     // how articles open
     const omSec = el('div', 'set-section');
     omSec.appendChild(el('div', 'set-title', '기사 열기 방식'));
@@ -4806,11 +4810,6 @@ function openSettings() {
     bak.appendChild(bbtn);
     body.appendChild(bak);
 
-    // Last thing on the page: it is what you look up when reporting a problem,
-    // not something to read past on the way to a setting.
-    const ver = el('div', 'set-version');
-    ver.textContent = `버전 ${typeof APP_VERSION === 'string' ? APP_VERSION : '?'}`;
-    body.appendChild(ver);
   });
 }
 
