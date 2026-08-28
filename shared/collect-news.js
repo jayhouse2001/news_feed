@@ -26,6 +26,11 @@ const CATEGORIES = [
   { id: 'intl_business', name: '해외 경제', url: US_TOPIC('BUSINESS'), lang: 'en' },
   { id: 'intl_tech', name: '해외 IT', url: US_TOPIC('TECHNOLOGY'), lang: 'en' },
   { id: 'intl_science', name: '해외 과학', url: US_TOPIC('SCIENCE'), lang: 'en' },
+  // Foreign science splits cleanly because the outlets already publish per-desk
+  // feeds. Korean science has no such thing — there is no domestic space or
+  // earth-science RSS at all — so 과학 stays one category.
+  { id: 'intl_space', name: '해외 우주', url: US_TOPIC('SCIENCE'), lang: 'en' },
+  { id: 'intl_earth', name: '해외 지구·환경', url: US_TOPIC('SCIENCE'), lang: 'en' },
   { id: 'intl_health', name: '해외 건강', url: US_TOPIC('HEALTH'), lang: 'en' },
   { id: 'intl_sports', name: '해외 스포츠', url: US_TOPIC('SPORTS'), lang: 'en' },
   { id: 'intl_ent', name: '해외 연예', url: US_TOPIC('ENTERTAINMENT'), lang: 'en' },
@@ -72,9 +77,17 @@ const PUBLISHER_SOURCES = [
   { cat: 'entertainment', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/culture.xml' },
   { cat: 'health', name: '연합뉴스', url: 'https://www.yna.co.kr/rss/health.xml' },
   { cat: 'health', name: '뉴시스', url: 'https://newsis.com/RSS/health.xml' },
+  { cat: 'health', name: '의학신문', url: 'https://www.bosa.co.kr/rss/allArticle.xml' },
+  { cat: 'health', name: '청년의사', url: 'https://www.docdocdoc.co.kr/rss/allArticle.xml' },
   { cat: 'tech', name: '매일경제', url: 'https://www.mk.co.kr/rss/50100032/' },
-  // No Korean science outlet publishes an image in its feed, so 과학 keeps
-  // running on the aggregate alone.
+  // IT ran on that one 매일경제 feed, which is not an IT desk: a Nepal flood and a
+  // pineapple history both arrived under IT. These are actual technology desks.
+  { cat: 'tech', name: '아이뉴스24', url: 'https://www.inews24.com/rss/news_it.xml' },
+  { cat: 'tech', name: '전자신문', url: 'https://rss.etnews.com/Section901.xml' },
+  { cat: 'tech', name: '전자신문', url: 'https://rss.etnews.com/Section902.xml' },
+  { cat: 'tech', name: '한국경제', url: 'https://www.hankyung.com/feed/it' },
+  { cat: 'tech', name: '전자부품전문미디어', url: 'https://www.thelec.kr/rss/allArticle.xml' },
+  { cat: 'tech', name: 'AI타임스', url: 'https://www.aitimes.com/rss/allArticle.xml' },
   // foreign categories; titles are translated client-side
   { cat: 'intl', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/rss.xml' },
   { cat: 'intl', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
@@ -96,6 +109,16 @@ const PUBLISHER_SOURCES = [
   { cat: 'intl_science', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml' },
   { cat: 'intl_science', name: 'Phys.org', url: 'https://phys.org/rss-feed/' },
   { cat: 'intl_science', name: 'Space Daily', url: 'https://www.spacedaily.com/spacedaily.xml' },
+  { cat: 'intl_science', name: 'Live Science', url: 'https://www.livescience.com/feeds/all' },
+  { cat: 'intl_science', name: 'Quanta', url: 'https://www.quantamagazine.org/feed/' },
+  { cat: 'intl_space', name: 'Phys.org', url: 'https://phys.org/rss-feed/space-news/' },
+  { cat: 'intl_space', name: 'Space.com', url: 'https://www.space.com/feeds/all' },
+  { cat: 'intl_space', name: 'SpaceNews', url: 'https://spacenews.com/feed/' },
+  { cat: 'intl_space', name: 'NASA', url: 'https://science.nasa.gov/feed/' },
+  { cat: 'intl_space', name: 'ESA', url: 'https://www.esa.int/rssfeed/Our_Activities/Space_News' },
+  { cat: 'intl_earth', name: 'Phys.org', url: 'https://phys.org/rss-feed/earth-news/' },
+  { cat: 'intl_earth', name: 'NASA Earth', url: 'https://earthobservatory.nasa.gov/feeds/earth-observatory.rss' },
+  { cat: 'intl_earth', name: 'The Guardian', url: 'https://www.theguardian.com/environment/climate-crisis/rss' },
   { cat: 'intl_health', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/health/rss.xml' },
   { cat: 'intl_health', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml' },
   { cat: 'intl_sports', name: 'BBC', url: 'https://feeds.bbci.co.uk/sport/rss.xml' },
@@ -111,13 +134,36 @@ const PUBLISHER_SOURCES = [
   // no pictures beats a category with no articles. etnews was tried and dropped:
   // its only feeds are general-news sections, so sinkholes and crime stories
   // arrived under 과학.
+  // 동아사이언스 puts a picture on nearly every item, which is what gives 과학
+  // thumbnails at all. Its source name is deliberately distinct from 동아일보,
+  // which is blocked by default.
+  { cat: 'science', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
   { cat: 'science', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
   { cat: 'science', name: '로봇신문', url: 'https://www.irobotnews.com/rss/allArticle.xml' },
+  { cat: 'science', name: '환경일보', url: 'https://www.hkbs.co.kr/rss/allArticle.xml' },
+  // YouTube publishes a per-channel Atom feed with no key and a thumbnail on every
+  // entry — the one source of pictures for 과학 besides 동아사이언스. Channel ids were
+  // taken from each page's <link rel="canonical"> and confirmed against the
+  // feed's own <author><name>. The "channelId" field on the page is NOT it — it
+  // also matches sidebar channels, which is how a first pass ended up with
+  // Kurzgesagt After Dark and PBS Documentaries. Only channel_id works; ?user= and
+  // ?playlist_id= are both 404.
+  { cat: 'science', name: '안될과학', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCMc4EmuDxnHPc6pgGW-QWvQ' },
+  { cat: 'science', name: '과학드림', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCIk1-yPCTnFuzfgu4gyfWqw' },
+  { cat: 'intl_science', name: 'Kurzgesagt', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCsXVk37bltHxD1rDPwtNM8Q' },
+  { cat: 'intl_science', name: 'Veritasium', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA' },
+  { cat: 'intl_science', name: 'SciShow', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCZYTClx2T1of7BRZ86-8fow' },
+  { cat: 'intl_space', name: 'PBS Space Time', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC7_gcs09iThXybpVgjHZ_7g' },
+  { cat: 'intl_space', name: 'NASA', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCLA_DiR1FfKNvjuUpBHmylQ' },
 ];
 
 // Two sources per category now, and the reader pages through them 15 at a
 // time, so the cap is what a category can hold rather than what fits a screen.
 const MAX_ITEMS_PER_CATEGORY = 120;
+// Measured: 20 keeps 동아사이언스 and the video channels visible without starving a
+// category whose only busy feed is a wire service.
+const MAX_PER_SOURCE = 20;
+const MAX_PER_SOURCE_WITH_MEDIA = 45;
 const RECENCY_HALF_LIFE_HOURS = 12;
 const SIMILARITY_THRESHOLD = 0.5;
 
@@ -144,6 +190,20 @@ function tag(block, name) {
   return decodeEntities(v);
 }
 
+// Google appends " - <publisher>" to every headline. The <source> element says the
+// same thing, but the relay drops it, so the suffix is the only copy that survives
+// both paths. Blocking a publisher depends on this name, so losing it would let a
+// blocked outlet through rather than merely leave a label blank.
+function splitTitleSource(title) {
+  const i = title.lastIndexOf(' - ');
+  if (i < 1) return { title, source: '' };
+  const source = title.slice(i + 3).trim();
+  // a real outlet name is short and carries no sentence punctuation; anything else
+  // is part of the headline itself
+  if (!source || source.length > 30 || /[.?!,;:]$/.test(source)) return { title, source: '' };
+  return { title: title.slice(0, i).trim(), source };
+}
+
 function parseRss(xml) {
   const items = [];
   for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
@@ -153,10 +213,14 @@ function parseRss(xml) {
     const pubDate = tag(block, 'pubDate');
     const srcMatch = block.match(/<source\s+url="([^"]*)"[^>]*>([\s\S]*?)<\/source>/);
     const sourceUrl = srcMatch ? decodeEntities(srcMatch[1]) : '';
-    const source = srcMatch ? decodeEntities(srcMatch[2]).trim() : '';
-    // Google appends " - <source>" to titles; strip it
+    let source = srcMatch ? decodeEntities(srcMatch[2]).trim() : '';
     if (source && title.endsWith(` - ${source}`)) {
       title = title.slice(0, -(source.length + 3)).trim();
+    } else if (!source) {
+      // the relay path: no <source> element, so read it off the title
+      const split = splitTitleSource(title);
+      title = split.title;
+      source = split.source;
     }
     // related coverage list appears as <li> entries in description
     const desc = tag(block, 'description');
@@ -225,10 +289,36 @@ function clusterAndScore(items, now, imageIndex) {
       coverage,
       score: Math.round(score * 1000) / 1000,
       ...(image ? { image } : {}),
+      ...(rep.video ? { video: rep.video } : {}),
     });
   }
   out.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-  return out.slice(0, MAX_ITEMS_PER_CATEGORY);
+  return capPerSource(out).slice(0, MAX_ITEMS_PER_CATEGORY);
+}
+
+// Recency alone lets one high-volume outlet take the whole category. 환경일보 posts
+// 38 text-only items a day and pushed 동아사이언스 — the only Korean science feed that
+// carries pictures — down to 24, cutting 과학 thumbnails from 47 to 22. Video
+// channels publish a handful a week and lost every slot the same way.
+//
+// So each source keeps its newest MAX_PER_SOURCE, and what overflows is appended
+// after the capped set rather than dropped: a category thin on sources still fills
+// up, but no single feed crowds the top.
+function capPerSource(items) {
+  const count = new Map();
+  const kept = [];
+  const overflow = [];
+  for (const it of items) {
+    const key = it.source || '?';
+    const n = (count.get(key) || 0) + 1;
+    count.set(key, n);
+    // An item with a picture or a clip gets a wider allowance. In 과학 exactly one
+    // feed carries images, so capping it at the same number as five text-only feeds
+    // is what decides whether the category has thumbnails at all.
+    const limit = (it.image || it.video) ? MAX_PER_SOURCE_WITH_MEDIA : MAX_PER_SOURCE;
+    (n <= limit ? kept : overflow).push(it);
+  }
+  return kept.concat(overflow);
 }
 
 // Publishers advertise the image in whichever element their CMS emits, and
@@ -275,6 +365,12 @@ function parsePublisherRss(xml, source) {
     if (!title || !/^https?:\/\//i.test(link)) continue;
     let host = '';
     try { host = new URL(link).origin; } catch { host = ''; }
+    // A YouTube entry is a clip, not an article: it needs a play affordance and a
+    // shorts badge, and it must never be treated as another outlet's coverage of
+    // the same story when clustering.
+    const video = /youtube\.com\/(watch\?v=|shorts\/)/.test(link)
+      ? { video: /\/shorts\//.test(link) ? 'short' : 'video' }
+      : null;
     items.push({
       title,
       link,
@@ -283,6 +379,7 @@ function parsePublisherRss(xml, source) {
       pubDate,
       related: 0,
       image: itemImage(block),
+      ...(video || {}),
     });
   }
   return items;
@@ -338,15 +435,71 @@ export function findImage(index, title) {
   return best >= IMAGE_MATCH_THRESHOLD ? img : null;
 }
 
+// Google answers a Cloudflare address with HTTP 200 and an empty body — not the
+// 503 an earlier note recorded — so the failure never reached the error path and
+// every category quietly lost its aggregate. These converters read the feed from
+// their own address and hand back JSON. Measured 2026-08-28: 5/5 on both, 591
+// items across twelve categories, newest item as fresh as a direct fetch.
+const RELAYS = [
+  'https://www.toptal.com/developers/feed2json/convert?url=',
+  'https://feed2json.org/convert?url=',
+];
+
+// The relay parses the query string, and `when:1d` arrives double-encoded on the
+// far side and matches nothing: `q=정치 when:1d` returns 0 where `q=정치` returns 104.
+// Dropping the operator costs nothing — the feed is ordered by recency anyway and
+// the collector scores on pubDate.
+function relayUrl(base, feedUrl) {
+  return base + encodeURIComponent(feedUrl.replace(/(\s|\+)when(:|%3A)1d/gi, ''));
+}
+
+// Shaped to look like the RSS the rest of the code expects, so parseRss stays the
+// single place that knows what an item is.
+function rssFromJsonFeed(json) {
+  const items = Array.isArray(json.items) ? json.items : [];
+  const esc = (v) => String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const body = items.map((it) => {
+    const date = it.date_published || it.pubDate || '';
+    return '<item>'
+      + `<title>${esc(it.title)}</title>`
+      + `<link>${esc(it.url || it.link || '')}</link>`
+      + `<pubDate>${esc(date)}</pubDate>`
+      + `<description>${esc(it.summary || it.content_html || '')}</description>`
+      + '</item>';
+  }).join('');
+  return `<rss><channel>${body}</channel></rss>`;
+}
+
+// Tries each relay in turn. A relay that answers with no items counts as a failure:
+// that is exactly what the direct fetch already does, and accepting it would put
+// the silent-empty bug back in a new place.
+async function fetchGoogleFeed(url) {
+  let lastErr = 'no relay tried';
+  for (const base of RELAYS) {
+    try {
+      const res = await fetch(relayUrl(base, url), {
+        headers: { 'user-agent': UA },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const items = parseRss(rssFromJsonFeed(await res.json()));
+      if (!items.length) throw new Error('relay returned no items');
+      return items;
+    } catch (err) {
+      lastErr = `${new URL(base).host}: ${err.message}`;
+    }
+  }
+  throw new Error(lastErr);
+}
+
 async function fetchCategory(cat, now, imageIndex, pub) {
   // Publisher items are passed in, already parsed: they come from the same
   // responses the image index was built from.
   let google = [];
   let error = null;
   try {
-    const res = await fetch(cat.url, { headers: { 'user-agent': UA } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    google = parseRss(await res.text());
+    google = await fetchGoogleFeed(cat.url);
   } catch (err) {
     error = err.message;
     console.error(`[fail] ${cat.name} (google): ${err.message}`);
@@ -365,12 +518,16 @@ async function fetchCategory(cat, now, imageIndex, pub) {
     + `(pub ${pub.length} + google ${google.length}, ${withImage} with image)`);
   return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
 }
-// A Worker invocation may make at most 50 outbound requests on the free plan,
-// and a full collection wants 65 even after the image feeds stop being fetched
-// twice. So the work is done in slices: the caller runs each slice and merges.
-// Measured: publisher feeds answer in 40ms from the edge, so slicing costs
-// almost nothing in wall time.
-export const SLICE_COUNT = 2;
+// A Worker invocation may make at most 50 outbound requests on the free plan, and
+// a full collection wants far more. So the work is done in slices: the caller runs
+// each slice and merges. Measured: publisher feeds answer in 40ms from the edge, so
+// slicing costs almost nothing in wall time.
+//
+// Raised 2 -> 3 on 2026-08-28. Counted, not guessed: at 2 the widest slice needs 54
+// requests (10 categories + 38 publisher feeds + 6 image-only) and silently loses
+// whatever crosses the ceiling. At 3 it is 39, which leaves room for the relay to
+// fall through to its second host on a few categories without going over.
+export const SLICE_COUNT = 3;
 
 export function categorySlice(index, count = SLICE_COUNT) {
   return CATEGORIES.filter((_, i) => i % count === index);

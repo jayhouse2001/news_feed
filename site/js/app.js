@@ -399,11 +399,23 @@ function newsItemNode(item, opts) {
     thumb.referrerPolicy = 'no-referrer';
     // a dead or hotlink-blocked image must not leave a broken icon
     thumb.addEventListener('error', () => thumb.remove());
-    top.insertBefore(thumb, more);
+    // A clip needs to look like one before it is tapped: the thumbnail is
+    // indistinguishable from an article photo otherwise.
+    if (item.video) {
+      const frame = el('span', 'thumb-video');
+      frame.appendChild(thumb);
+      frame.appendChild(el('span', 'play'));
+      top.insertBefore(frame, more);
+    } else {
+      top.insertBefore(thumb, more);
+    }
   }
   li.appendChild(top);
 
   const meta = el('div', 'meta');
+  if (item.video) {
+    meta.appendChild(el('span', 'badge video-badge', item.video === 'short' ? '쇼츠' : '영상'));
+  }
   if (item.coverage >= 5) {
     meta.appendChild(el('span', 'badge', `${item.coverage}곳 보도`));
   }
