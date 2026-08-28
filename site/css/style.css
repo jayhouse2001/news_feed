@@ -942,6 +942,14 @@ textarea.in { width: 100%; resize: vertical; line-height: 1.45; }
 .s-item.danger { color: var(--warn); }
 /* a second line under a sheet action, for when the label alone would not say
    what happens next */
+/* sits under the last setting, quiet enough to scroll past */
+.set-version {
+  padding: 18px 4px 28px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .s-hint {
   display: block;
   margin-top: 2px;

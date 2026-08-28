@@ -33,6 +33,14 @@ jobs:
         with:
           node-version: 22
 
+      # site/js/version.js is generated, so it can be committed out of step with
+      # VERSION. Regenerating and diffing catches that here rather than shipping a
+      # settings screen that reports the wrong build.
+      - name: Check the version is in sync
+        run: |
+          node scripts/sync-version.mjs
+          git diff --exit-code site/js/version.js site/manifest.json
+
       # A stale fallback is better than none, so a failure here does not block
       # the deploy — the Worker supplies the live feed either way.
       - name: Build the fallback feed

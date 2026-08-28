@@ -4805,6 +4805,12 @@ function openSettings() {
     bbtn.addEventListener('click', () => openBackupPanel());
     bak.appendChild(bbtn);
     body.appendChild(bak);
+
+    // Last thing on the page: it is what you look up when reporting a problem,
+    // not something to read past on the way to a setting.
+    const ver = el('div', 'set-version');
+    ver.textContent = `버전 ${typeof APP_VERSION === 'string' ? APP_VERSION : '?'}`;
+    body.appendChild(ver);
   });
 }
 
