@@ -15,21 +15,10 @@ const CATEGORIES = [
   { id: 'politics', name: '정치', url: `https://news.google.com/rss/search?q=${encodeURIComponent('정치 when:1d')}&${EDITION}` },
   { id: 'business', name: '경제', url: TOPIC('BUSINESS') },
   { id: 'tech', name: 'IT', url: TOPIC('TECHNOLOGY') },
-  { id: 'science', name: '과학', url: TOPIC('SCIENCE') },
+  { id: 'science', name: '과학', url: TOPIC('SCIENCE'), science: true },
   // No Korean outlet publishes a space or earth-science feed — every institute RSS
   // tried was a 404 — so the subdivisions come from Google search instead. Measured
   // 100 items each and on topic. The publisher feeds above still carry 과학 itself.
-  // `match` keeps the general science publisher feeds honest here: those feeds are
-  // fetched for the pictures Google does not carry, but they are whole-desk feeds,
-  // so without a filter every 과학 story would also land under 우주.
-  { id: 'kr_space', name: '우주', url: SEARCH('우주 OR 위성 OR 누리호 OR 천문 OR 로켓'),
-    match: /우주|위성|누리호|로켓|천문|은하|블랙홀|행성|화성|천체|외계|소행성|발사체|궤도|망원경|항공우주/ },
-  { id: 'kr_earth', name: '지구·환경', url: SEARCH('기후변화 OR 지진 OR 해양 OR 생태계 OR 대기오염'),
-    match: /기후|지구|해양|대기|환경|생태|기상|지진|화산|빙하|온난화|탄소|미세먼지|산림|폭염|태풍|수질|오염|생물다양/ },
-  { id: 'kr_physics', name: '물리·화학', url: SEARCH('물리학 OR 양자 OR 핵융합 OR 신소재 OR 초전도'),
-    match: /물리|양자|입자|초전도|레이저|핵융합|가속기|나노|광학|신소재|소재|촉매|화학|플라즈마/ },
-  { id: 'kr_bio', name: '생명과학', url: SEARCH('유전자 OR 세포 OR 신약 OR 단백질 OR 뇌과학'),
-    match: /유전자|세포|단백질|생명|바이러스|면역|뇌|신경|암|백신|치료제|신약|줄기세포|미생물|DNA|생물|바이오/ },
   { id: 'world', name: '세계', url: TOPIC('WORLD') },
   { id: 'nation', name: '사회', url: TOPIC('NATION') },
   { id: 'sports', name: '스포츠', url: TOPIC('SPORTS') },
@@ -159,18 +148,6 @@ const PUBLISHER_SOURCES = [
   { cat: 'science', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
   { cat: 'science', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
   { cat: 'science', name: '로봇신문', url: 'https://www.irobotnews.com/rss/allArticle.xml' },
-  { cat: 'science', name: '환경일보', url: 'https://www.hkbs.co.kr/rss/allArticle.xml' },
-  // The Korean subcategories are Google searches, and Google carries no pictures.
-  // Pointing the publisher feeds at them as well is what gives those pages
-  // thumbnails: 동아사이언스 covers space and physics, 환경일보 covers earth.
-  { cat: 'kr_space', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
-  { cat: 'kr_space', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
-  { cat: 'kr_earth', name: '환경일보', url: 'https://www.hkbs.co.kr/rss/allArticle.xml' },
-  { cat: 'kr_earth', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
-  { cat: 'kr_physics', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
-  { cat: 'kr_physics', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
-  { cat: 'kr_bio', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
-  { cat: 'kr_bio', name: '의학신문', url: 'https://www.bosa.co.kr/rss/allArticle.xml' },
   // YouTube publishes a per-channel Atom feed with no key and a thumbnail on every
   // entry — the one source of pictures for 과학 besides 동아사이언스. Channel ids were
   // taken from each page's <link rel="canonical"> and confirmed against the
@@ -192,6 +169,18 @@ const PUBLISHER_SOURCES = [
 const MAX_ITEMS_PER_CATEGORY = 120;
 // Measured: 20 keeps 동아사이언스 and the video channels visible without starving a
 // category whose only busy feed is a wire service.
+// Korean science desks run a lot that is not science. 환경일보 was dropped outright
+// — 21 of its items were town-hall notices and 2 were science — but the rest carry
+// the same filler: council openings, MOU signings, award ceremonies, and (for
+// 동아사이언스, whose feed is really the paper's IT desk) share prices and earnings.
+// A headline shaped like any of those is not a science story whatever desk filed it.
+const OFF_TOPIC = new RegExp([
+  '^[가-힣]{2,8}(시|군|구|도|시의회|군의회|구의회|시청|도청)[,\s]',
+  '시장|군수|구청장|도지사|의회|추경|예산안|취임|개원|간담회|협약|MOU|위촉|표창',
+  '공모전|박람회|축제|기념식|설명회|워크숍|포럼 개최|착수보고',
+  '시총|주식|주가|증시|코스닥|코스피|실적|분양|아파트|매출|투자유치|상장|채용',
+].join('|'));
+
 const MAX_PER_SOURCE = 20;
 const MAX_PER_SOURCE_WITH_MEDIA = 45;
 const RECENCY_HALF_LIFE_HOURS = 12;
@@ -562,8 +551,9 @@ async function fetchCategory(cat, now, imageIndex, pub) {
   // A search feed answers the query, not the subject: `우주 OR 위성` matched betting
   // spam and a university admissions notice. The same filter that keeps the
   // publisher feeds on topic is applied to the aggregate for the same reason.
+  const onTopic = (list) => (cat.science ? list.filter((i) => !OFF_TOPIC.test(i.title)) : list);
   const kept = cat.match ? google.filter((i) => cat.match.test(i.title)) : google;
-  const items = clusterAndScore([...pub, ...kept], now, imageIndex);
+  const items = clusterAndScore(onTopic([...pub, ...kept]), now, imageIndex);
   const withImage = items.filter((i) => i.image).length;
   console.log(`[ok] ${cat.name}: ${items.length} items `
     + `(pub ${pub.length} + google ${kept.length}, ${withImage} with image)`);
