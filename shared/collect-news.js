@@ -169,17 +169,33 @@ const PUBLISHER_SOURCES = [
 const MAX_ITEMS_PER_CATEGORY = 120;
 // Measured: 20 keeps 동아사이언스 and the video channels visible without starving a
 // category whose only busy feed is a wire service.
-// Korean science desks run a lot that is not science. 환경일보 was dropped outright
-// — 21 of its items were town-hall notices and 2 were science — but the rest carry
-// the same filler: council openings, MOU signings, award ceremonies, and (for
-// 동아사이언스, whose feed is really the paper's IT desk) share prices and earnings.
-// A headline shaped like any of those is not a science story whatever desk filed it.
-const OFF_TOPIC = new RegExp([
-  '^[가-힣]{2,8}(시|군|구|도|시의회|군의회|구의회|시청|도청)[,\s]',
-  '시장|군수|구청장|도지사|의회|추경|예산안|취임|개원|간담회|협약|MOU|위촉|표창',
-  '공모전|박람회|축제|기념식|설명회|워크숍|포럼 개최|착수보고',
-  '시총|주식|주가|증시|코스닥|코스피|실적|분양|아파트|매출|투자유치|상장|채용',
+// None of the three Korean feeds behind 과학 is a science desk. 로봇신문 is a robotics
+// trade paper, 헬로디디 covers research funding and policy, and 동아사이언스 publishes
+// the paper's IT section under its science URL. Left alone they filled the category:
+// 70 of 120 items were AI launches, phone reviews, lawsuits and share prices.
+//
+// Excluding the filler was not enough — the leftovers were still mostly industry —
+// so a headline has to name a scientific subject to get in, and must not also read
+// as a business or policy story. "AI가 설계하는 자율실험실" belongs here; "모두의 AI
+// 사업자 선정" does not, and only the second test separates them.
+const SCIENCE_SUBJECT = new RegExp([
+  '우주|위성|누리호|로켓|천문|은하|블랙홀|행성|화성|천체|외계|소행성|궤도|망원경',
+  '기후|지진|화산|빙하|온난화|해류|생태|미세먼지|화석|공룡|고생물|금성|목성|토성|태양',
+  '물리|양자|입자|초전도|핵융합|플라즈마|가속기|나노|광학|신소재|촉매|화학|수학',
+  '유전자|세포|단백질|바이러스|면역|뇌|신경|암|백신|치매|줄기세포|미생물|DNA|진화|복제',
+  '미토콘드리아|신약|치료제|임상|증후군|노화|우울증|수명|항체|질환',
+  '연구진|연구팀|논문|과학자|실험|규명|관측|탐사|학술지|네이처|사이언스|노벨상|발견',
 ].join('|'));
+
+const TRADE_STORY = new RegExp([
+  '출시|수주|합의|소송|가맹|분할|인수|계약|협약|MOU|입주|선정|지정|공모|세미나|간담회|포럼|박람회',
+  '투자|매출|수출|시총|주가|증시|코스닥|코스피|실적|상장|스타트업|사업자|플랫폼|솔루션|브랜드',
+  '장관|차관|국회|의원|예산|공약|사설|기고|칼럼|횡설수설|브리핑|취임|개원|위촉|표창|채용',
+  '스마트폰|폴드|이어폰|게임|챗GPT|데이터센터|해커|보안|워터마크|세탁|뷰티|프로모션|분양|아파트',
+  '^[가-힣]{2,8}(시|군|구|도|시의회|군의회|구의회|시청|도청)[,\s]',
+].join('|'));
+
+const isScience = (title) => SCIENCE_SUBJECT.test(title) && !TRADE_STORY.test(title);
 
 const MAX_PER_SOURCE = 20;
 const MAX_PER_SOURCE_WITH_MEDIA = 45;
@@ -551,7 +567,7 @@ async function fetchCategory(cat, now, imageIndex, pub) {
   // A search feed answers the query, not the subject: `우주 OR 위성` matched betting
   // spam and a university admissions notice. The same filter that keeps the
   // publisher feeds on topic is applied to the aggregate for the same reason.
-  const onTopic = (list) => (cat.science ? list.filter((i) => !OFF_TOPIC.test(i.title)) : list);
+  const onTopic = (list) => (cat.science ? list.filter((i) => isScience(i.title)) : list);
   const kept = cat.match ? google.filter((i) => cat.match.test(i.title)) : google;
   const items = clusterAndScore(onTopic([...pub, ...kept]), now, imageIndex);
   const withImage = items.filter((i) => i.image).length;
