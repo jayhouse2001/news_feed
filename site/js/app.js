@@ -312,13 +312,22 @@ async function gtx(text) {
 }
 
 // Translate the marked titles one at a time to avoid hammering the endpoint.
-let trRunning = false;
-async function translatePending(root) {
-  if (trRunning) return;
-  trRunning = true;
-  try {
-    const nodes = [...(root || document).querySelectorAll('[data-tr]')];
-    for (const node of nodes) {
+//
+// The guard used to return instead of waiting, which silently abandoned titles:
+// the dashboard, the category page and the pager all call this within a few
+// hundred milliseconds of each other, so whichever lost the race dropped its
+// nodes for good — they had already been marked, and nothing marks them twice.
+// Callers now queue behind the run in flight, and the sweep re-scans the whole
+// document at the end to catch anything rendered while it was working.
+let trChain = Promise.resolve();
+function translatePending(root) {
+  trChain = trChain.then(() => translateNow(root)).catch(() => {});
+  return trChain;
+}
+
+async function translateNow(root) {
+  const sweep = async (scope) => {
+    for (const node of [...scope.querySelectorAll('[data-tr]')]) {
       const orig = node.getAttribute('data-tr');
       node.removeAttribute('data-tr');
       if (trCache[orig]) {
@@ -334,9 +343,11 @@ async function translatePending(root) {
         node.classList.add('untranslated');
       }
     }
-  } finally {
-    trRunning = false;
-  }
+  };
+  await sweep(root || document);
+  // A page rendered while the loop above was awaiting would otherwise keep its
+  // marks until something else happened to trigger a run.
+  if (root) await sweep(document);
 }
 
 // ---------- news item ----------
