@@ -2,9 +2,17 @@ name = "news-feeder-cron"
 main = "cron.js"
 compatibility_date = "2026-08-01"
 
-# Every half hour, the cadence the feed collection has always run at.
+# One slice per run, so a full refresh takes SLICE_COUNT runs: at 30 minutes and
+# three slices that was 90 minutes, which is too stale for a news feed. Ten
+# minutes puts a full cycle back at 30.
+#
+# The binding limit is KV writes, not requests: each run writes twice (its slice,
+# then the published feed), and the free plan allows 1,000 writes a day. At */10
+# that is 288. */1 would be 2,880 and would simply stop writing partway through
+# the day — and hammering 76 publisher feeds every minute would earn a block
+# without gaining anything, since RSS sources do not update that often.
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/10 * * * *"]
 
 # Same database the Pages Functions bind as DB.
 [[d1_databases]]

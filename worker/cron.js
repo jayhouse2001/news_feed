@@ -25,13 +25,19 @@ export const STATUS_KEY = 'cron:last';
 // publishing each slice as it arrives would leave the app showing half a feed.
 const SLICE_KEY = (i) => `news:slice:${i}`;
 
+// Keep in step with the cron trigger in wrangler.toml.
+const CRON_PERIOD_MS = 10 * 60 * 1000;
+
 async function collectAndStore(env, sliceArg) {
   const started = Date.now();
 
   // A cron invocation picks its slice from the clock, so consecutive runs cover
-  // every slice in turn without needing to remember where they left off.
+  // every slice in turn without needing to remember where they left off. The
+  // divisor must be the cron period: it was left at 30 minutes when the trigger
+  // moved to 10, which made three runs in a row collect the same slice and left
+  // a full cycle still taking 90 minutes while spending three times the requests.
   const slice = sliceArg != null ? sliceArg
-    : Math.floor(Date.now() / (30 * 60 * 1000)) % SLICE_COUNT;
+    : Math.floor(Date.now() / CRON_PERIOD_MS) % SLICE_COUNT;
 
   const { categories, texts } = await collectSlice(slice);
   await env.NEWS.put(SLICE_KEY(slice), JSON.stringify({
@@ -174,6 +180,37 @@ export default {
   // budget and hammer the upstream feeds.
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // Read-only, so no secret: it spends nothing and touches no upstream feed.
+    // Checking whether collection is healthy should not require the key that also
+    // lets the caller trigger a full run.
+    if (url.pathname === '/status') {
+      const [last, ...slices] = await Promise.all([
+        env.NEWS.get(STATUS_KEY),
+        ...Array.from({ length: SLICE_COUNT }, (_, i) => env.NEWS.get(SLICE_KEY(i))),
+      ]);
+      const published = await env.NEWS.get(NEWS_KEY);
+      const feed = published ? JSON.parse(published) : null;
+      const ids = feed ? feed.categories.map((c) => c.id) : [];
+      return Response.json({
+        lastRun: last ? JSON.parse(last) : null,
+        cronEveryMinutes: CRON_PERIOD_MS / 60000,
+        sliceCount: SLICE_COUNT,
+        fullCycleMinutes: (CRON_PERIOD_MS / 60000) * SLICE_COUNT,
+        slicesStored: slices.map((v, i) => (v ? { slice: i, at: JSON.parse(v).at } : { slice: i, at: null })),
+        publishedAt: feed ? feed.updatedAt : null,
+        categories: ids.length,
+        duplicates: ids.length - new Set(ids).size,
+        withImage: feed ? feed.categories.reduce((n, c) => n + c.items.filter((i) => i.image).length, 0) : 0,
+        withVideo: feed ? feed.categories.reduce((n, c) => n + c.items.filter((i) => i.video).length, 0) : 0,
+        perCategory: feed ? feed.categories.map((c) => ({
+          id: c.id, items: c.items.length,
+          image: c.items.filter((i) => i.image).length,
+          video: c.items.filter((i) => i.video).length,
+        })) : [],
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+
     if (url.pathname !== '/run') return new Response('not found', { status: 404 });
     if (!env.CRON_SECRET || url.searchParams.get('key') !== env.CRON_SECRET) {
       return new Response('forbidden', { status: 403 });
