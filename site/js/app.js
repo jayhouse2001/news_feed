@@ -350,24 +350,19 @@ function isStandalone() {
   );
 }
 
-// iOS has no URL that opens a page already translated: translate.goog and Papago
-// both answer "not available in your region" from Korea (checked in a browser, not
-// just a fetch — Google blocks scripted requests too, so a 403 alone proves
-// nothing). Safari's own translator does work, and it is one tap from the page, so
-// the article is handed to Safari and the reader is told where the button is.
+// Google and Papago both answer "not available in your region" from Korea — checked
+// by rendering them, not by fetching, since Google returns 403 to any scripted
+// request and a failed fetch would prove nothing. Yandex serves the article fully
+// translated, NYT included, and gets past that paywall on the way.
+function translatedUrl(link) {
+  return `https://translate.yandex.com/translate?url=${encodeURIComponent(link)}&lang=en-ko`;
+}
+
 function openInSafari(link, translate) {
-  const go = () => {
-    // standalone swallows target=_blank inside the app shell
-    if (isStandalone()) window.location.href = `x-safari-${link}`;
-    else window.open(link, '_blank', 'noopener,noreferrer');
-  };
-  if (!translate) { go(); return; }
-  // The hint has to be read before the hand-off, or Safari takes the screen with
-  // it still on it. A tap dismisses it early for anyone who already knows.
-  toast('Safari에서 「あ」 → “한국어로 번역” 을 누르세요');
-  const t = setTimeout(go, 1800);
-  const box = document.getElementById('toast');
-  if (box) box.addEventListener('click', () => { clearTimeout(t); go(); }, { once: true });
+  const url = translate ? translatedUrl(link) : link;
+  // standalone swallows target=_blank inside the app shell
+  if (isStandalone()) window.location.href = `x-safari-${url}`;
+  else window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function newsItemNode(item, opts) {
@@ -519,8 +514,8 @@ function openItemSheet(item, opts) {
   }];
   if (opts && opts.translate) {
     actions.push({
-      label: '🌐 Safari로 열고 번역',
-      hint: 'Safari 번역 기능을 사용합니다',
+      label: '🌐 한국어로 번역해서 열기',
+      hint: '기사 전문이 번역된 상태로 열립니다',
       onClick() { openInSafari(item.link, true); },
     });
   }
