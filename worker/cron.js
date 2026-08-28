@@ -7,7 +7,7 @@
 // would mean two deploys to keep in step.
 
 import {
-  collectSlice, buildImageIndex, findImage, SLICE_COUNT, CATEGORY_IDS,
+  collectSlice, imageRows, indexFromRows, findImage, SLICE_COUNT, CATEGORY_IDS,
 } from '../shared/collect-news.js';
 import { matchArticles } from '../functions/_lib/match.js';
 
@@ -40,8 +40,9 @@ async function collectAndStore(env, sliceArg) {
     : Math.floor(Date.now() / CRON_PERIOD_MS) % SLICE_COUNT;
 
   const { categories, texts } = await collectSlice(slice);
+  // The pictures, not the pages they came from — see imageRows.
   await env.NEWS.put(SLICE_KEY(slice), JSON.stringify({
-    at: new Date().toISOString(), categories, texts,
+    at: new Date().toISOString(), categories, images: imageRows(texts),
   }));
 
   // Merge whatever slices are on hand. A missing one keeps its previous
@@ -55,8 +56,12 @@ async function collectAndStore(env, sliceArg) {
     return { slice, sliceOnly: true, have, of: SLICE_COUNT, ms: Date.now() - started };
   }
 
-  const pooled = parts.flatMap((p) => p.texts);
-  const imageIndex = buildImageIndex(pooled);
+  // A slice written before this change stored the feed bodies instead of the rows
+  // drawn from them. Those are simply skipped: within one cycle every slice is
+  // rewritten in the new shape, and the only cost meanwhile is that a few pictures
+  // are matched from a smaller pool.
+  const pooled = parts.flatMap((p) => p.images || []);
+  const imageIndex = indexFromRows(pooled);
 
   // Keyed by id, not appended. A stored slice was written by whatever code was
   // deployed at the time, so after the category list changes the slices on hand

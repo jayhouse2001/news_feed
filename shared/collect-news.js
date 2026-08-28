@@ -414,10 +414,27 @@ function feedsForCategory(catId) {
 export function buildImageIndex(texts) {
   const rows = [];
   for (const { xml } of texts) rows.push(...parseImageFeed(xml));
-  const exact = new Map();
-  for (const r of rows) if (!exact.has(titleKey(r.title))) exact.set(titleKey(r.title), r.img);
   console.log(`[img] ${rows.length} images from ${texts.length} feed bodies`);
-  return { exact, tokens: rows.map((r) => ({ tk: tokens(r.title), img: r.img })) };
+  return indexFromRows(rows);
+}
+
+// The picture rows a slice contributes, as plain data. The Worker keeps these
+// between runs instead of the feed bodies they came from: the XML runs 2-4MB a
+// slice and exists only to be turned into this, so storing it made every merge
+// read and reparse about 10MB to rebuild something five times smaller.
+export function imageRows(texts) {
+  const rows = [];
+  for (const { xml } of texts) rows.push(...parseImageFeed(xml));
+  return rows.map((r) => [r.title, r.img]);
+}
+
+// Accepts either the [title, img] pairs above or the row objects, so a slice
+// stored by the previous shape still merges instead of erroring.
+export function indexFromRows(rows) {
+  const norm = rows.map((r) => (Array.isArray(r) ? { title: r[0], img: r[1] } : r));
+  const exact = new Map();
+  for (const r of norm) if (!exact.has(titleKey(r.title))) exact.set(titleKey(r.title), r.img);
+  return { exact, tokens: norm.map((r) => ({ tk: tokens(r.title), img: r.img })) };
 }
 
 
