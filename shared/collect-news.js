@@ -529,6 +529,12 @@ async function fetchCategory(cat, now, imageIndex, pub) {
 // fall through to its second host on a few categories without going over.
 export const SLICE_COUNT = 3;
 
+// The declared order, and the set of ids that currently exist. The Worker merges
+// slices written by earlier runs, so a slice stored before a category was added or
+// removed still carries the old list — this is what decides which of those survive
+// and in what order.
+export const CATEGORY_IDS = CATEGORIES.map((c) => c.id);
+
 export function categorySlice(index, count = SLICE_COUNT) {
   return CATEGORIES.filter((_, i) => i % count === index);
 }
@@ -608,7 +614,7 @@ export async function collectNews() {
     }
   }
   // put the categories back in their declared order
-  const order = new Map(CATEGORIES.map((c, i) => [c.id, i]));
+  const order = new Map(CATEGORY_IDS.map((id, i) => [id, i]));
   all.sort((a, b) => order.get(a.id) - order.get(b.id));
   const okCount = all.filter((c) => !c.error).length;
   if (okCount === 0) throw new Error('all categories failed');

@@ -6,7 +6,9 @@
 // the edge cannot reach a feed, neither job can — and because splitting them
 // would mean two deploys to keep in step.
 
-import { collectSlice, buildImageIndex, findImage, SLICE_COUNT } from '../shared/collect-news.js';
+import {
+  collectSlice, buildImageIndex, findImage, SLICE_COUNT, CATEGORY_IDS,
+} from '../shared/collect-news.js';
 import { matchArticles } from '../functions/_lib/match.js';
 
 export const NEWS_KEY = 'news:latest';
@@ -49,7 +51,14 @@ async function collectAndStore(env, sliceArg) {
 
   const pooled = parts.flatMap((p) => p.texts);
   const imageIndex = buildImageIndex(pooled);
-  const merged = [];
+
+  // Keyed by id, not appended. A stored slice was written by whatever code was
+  // deployed at the time, so after the category list changes the slices on hand
+  // disagree about which categories exist: merging them by concatenation shipped
+  // 24 categories with six duplicated, the stale copy of each winning the screen
+  // because it came first. The newest slice to carry a category wins.
+  const byId = new Map();
+  const freshness = new Map();
   for (const part of parts) {
     for (const cat of part.categories) {
       for (const it of cat.items || []) {
@@ -58,9 +67,17 @@ async function collectAndStore(env, sliceArg) {
           if (img) it.image = img;
         }
       }
-      merged.push(cat);
+      const prev = freshness.get(cat.id);
+      if (prev === undefined || part.at > prev) {
+        freshness.set(cat.id, part.at);
+        byId.set(cat.id, cat);
+      }
     }
   }
+
+  // A category dropped from the code must not linger in KV forever, and the
+  // reader shows them in this order.
+  const merged = CATEGORY_IDS.map((id) => byId.get(id)).filter(Boolean);
   const okCount = merged.filter((c) => !c.error).length;
   if (okCount === 0) throw new Error('all categories failed');
 
