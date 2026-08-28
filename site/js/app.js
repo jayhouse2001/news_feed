@@ -217,6 +217,9 @@ function openSheet(title, actions) {
   if (title) sheet.appendChild(el('div', 's-title', title));
   for (const a of actions) {
     const b = el('button', 's-item', a.label);
+    if (a.hint) {
+      b.appendChild(el('span', 's-hint', a.hint));
+    }
     b.addEventListener('click', () => {
       closeOverlay();
       if (a.onClick) a.onClick();
@@ -347,6 +350,26 @@ function isStandalone() {
   );
 }
 
+// iOS has no URL that opens a page already translated: translate.goog and Papago
+// both answer "not available in your region" from Korea (checked in a browser, not
+// just a fetch — Google blocks scripted requests too, so a 403 alone proves
+// nothing). Safari's own translator does work, and it is one tap from the page, so
+// the article is handed to Safari and the reader is told where the button is.
+function openInSafari(link, translate) {
+  const go = () => {
+    // standalone swallows target=_blank inside the app shell
+    if (isStandalone()) window.location.href = `x-safari-${link}`;
+    else window.open(link, '_blank', 'noopener,noreferrer');
+  };
+  if (!translate) { go(); return; }
+  // The hint has to be read before the hand-off, or Safari takes the screen with
+  // it still on it. A tap dismisses it early for anyone who already knows.
+  toast('Safari에서 「あ」 → “한국어로 번역” 을 누르세요');
+  const t = setTimeout(go, 1800);
+  const box = document.getElementById('toast');
+  if (box) box.addEventListener('click', () => { clearTimeout(t); go(); }, { once: true });
+}
+
 function newsItemNode(item, opts) {
   const li = el('li', 'news-item');
   const top = el('div', 'item-top');
@@ -384,7 +407,7 @@ function newsItemNode(item, opts) {
 
   const more = el('button', 'more', '⋯');
   more.setAttribute('aria-label', '기사 옵션');
-  more.addEventListener('click', () => openItemSheet(item));
+  more.addEventListener('click', () => openItemSheet(item, opts));
   top.appendChild(more);
 
   // Only a minority of articles carry a picture, so the thumbnail sits beside
@@ -487,11 +510,24 @@ function openReader(item) {
   window.addEventListener('popstate', onPop);
 }
 
-function openItemSheet(item) {
+function openItemSheet(item, opts) {
+  // Reaching Safari used to mean changing a setting first. It is the only way to
+  // get iOS translation on a foreign article, so it belongs on the article itself.
   const actions = [{
+    label: '⇱ Safari로 열기',
+    onClick() { openInSafari(item.link); },
+  }];
+  if (opts && opts.translate) {
+    actions.push({
+      label: '🌐 Safari로 열고 번역',
+      hint: 'Safari 번역 기능을 사용합니다',
+      onClick() { openInSafari(item.link, true); },
+    });
+  }
+  actions.push({
     label: isSaved(item.link) ? '★ 스크랩에서 빼기' : '☆ 스크랩에 저장',
     onClick() { toggleSaved(item); },
-  }];
+  });
   if (aiReady()) {
     actions.push({
       label: '✦ 이 뉴스를 AI로 추적 (과거까지)',

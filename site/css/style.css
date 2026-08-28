@@ -940,6 +940,15 @@ textarea.in { width: 100%; resize: vertical; line-height: 1.45; }
 .s-item:last-child { border-bottom: 0; }
 .s-cancel { color: var(--muted); }
 .s-item.danger { color: var(--warn); }
+/* a second line under a sheet action, for when the label alone would not say
+   what happens next */
+.s-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
 
 /* a confirmation raised from inside a panel has to sit above it */
 .sheet-backdrop.stacked { z-index: 80; }
