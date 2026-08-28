@@ -350,19 +350,14 @@ function isStandalone() {
   );
 }
 
-// Google and Papago both answer "not available in your region" from Korea — checked
-// by rendering them, not by fetching, since Google returns 403 to any scripted
-// request and a failed fetch would prove nothing. Yandex serves the article fully
-// translated, NYT included, and gets past that paywall on the way.
-function translatedUrl(link) {
-  return `https://translate.yandex.com/translate?url=${encodeURIComponent(link)}&lang=en-ko`;
-}
-
-function openInSafari(link, translate) {
-  const url = translate ? translatedUrl(link) : link;
+// Safari has its own translator and it is the one that works here; no web proxy is
+// wired up. Google and Papago are region-blocked from Korea and Yandex could not be
+// reached from the phone, and a page cannot press Safari's translate button for the
+// reader — it is system UI, not something the page can touch.
+function openInSafari(link) {
   // standalone swallows target=_blank inside the app shell
-  if (isStandalone()) window.location.href = `x-safari-${url}`;
-  else window.open(url, '_blank', 'noopener,noreferrer');
+  if (isStandalone()) window.location.href = `x-safari-${link}`;
+  else window.open(link, '_blank', 'noopener,noreferrer');
 }
 
 function newsItemNode(item, opts) {
@@ -402,7 +397,7 @@ function newsItemNode(item, opts) {
 
   const more = el('button', 'more', '⋯');
   more.setAttribute('aria-label', '기사 옵션');
-  more.addEventListener('click', () => openItemSheet(item, opts));
+  more.addEventListener('click', () => openItemSheet(item));
   top.appendChild(more);
 
   // Only a minority of articles carry a picture, so the thumbnail sits beside
@@ -505,20 +500,12 @@ function openReader(item) {
   window.addEventListener('popstate', onPop);
 }
 
-function openItemSheet(item, opts) {
-  // Reaching Safari used to mean changing a setting first. It is the only way to
-  // get iOS translation on a foreign article, so it belongs on the article itself.
+function openItemSheet(item) {
+  // Reaching Safari used to mean changing a setting that applies to every article,
   const actions = [{
     label: '⇱ Safari로 열기',
     onClick() { openInSafari(item.link); },
   }];
-  if (opts && opts.translate) {
-    actions.push({
-      label: '🌐 한국어로 번역해서 열기',
-      hint: '기사 전문이 번역된 상태로 열립니다',
-      onClick() { openInSafari(item.link, true); },
-    });
-  }
   actions.push({
     label: isSaved(item.link) ? '★ 스크랩에서 빼기' : '☆ 스크랩에 저장',
     onClick() { toggleSaved(item); },
