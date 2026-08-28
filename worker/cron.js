@@ -26,7 +26,7 @@ export const STATUS_KEY = 'cron:last';
 const SLICE_KEY = (i) => `news:slice:${i}`;
 
 // Keep in step with the cron trigger in wrangler.toml.
-const CRON_PERIOD_MS = 10 * 60 * 1000;
+const CRON_PERIOD_MS = 5 * 60 * 1000;
 
 async function collectAndStore(env, sliceArg) {
   const started = Date.now();

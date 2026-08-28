@@ -5,6 +5,7 @@
 
 const EDITION = 'hl=ko&gl=KR&ceid=KR:ko';
 const TOPIC = (t) => `https://news.google.com/rss/headlines/section/topic/${t}?${EDITION}`;
+const SEARCH = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&${EDITION}`;
 
 const US_EDITION = 'hl=en-US&gl=US&ceid=US:en';
 const US_TOPIC = (t) => `https://news.google.com/rss/headlines/section/topic/${t}?${US_EDITION}`;
@@ -15,6 +16,20 @@ const CATEGORIES = [
   { id: 'business', name: '경제', url: TOPIC('BUSINESS') },
   { id: 'tech', name: 'IT', url: TOPIC('TECHNOLOGY') },
   { id: 'science', name: '과학', url: TOPIC('SCIENCE') },
+  // No Korean outlet publishes a space or earth-science feed — every institute RSS
+  // tried was a 404 — so the subdivisions come from Google search instead. Measured
+  // 100 items each and on topic. The publisher feeds above still carry 과학 itself.
+  // `match` keeps the general science publisher feeds honest here: those feeds are
+  // fetched for the pictures Google does not carry, but they are whole-desk feeds,
+  // so without a filter every 과학 story would also land under 우주.
+  { id: 'kr_space', name: '우주', url: SEARCH('우주 OR 위성 OR 누리호 OR 천문 OR 로켓'),
+    match: /우주|위성|누리호|로켓|천문|은하|블랙홀|행성|화성|천체|외계|소행성|발사체|궤도|망원경|항공우주/ },
+  { id: 'kr_earth', name: '지구·환경', url: SEARCH('기후변화 OR 지진 OR 해양 OR 생태계 OR 대기오염'),
+    match: /기후|지구|해양|대기|환경|생태|기상|지진|화산|빙하|온난화|탄소|미세먼지|산림|폭염|태풍|수질|오염|생물다양/ },
+  { id: 'kr_physics', name: '물리·화학', url: SEARCH('물리학 OR 양자 OR 핵융합 OR 신소재 OR 초전도'),
+    match: /물리|양자|입자|초전도|레이저|핵융합|가속기|나노|광학|신소재|소재|촉매|화학|플라즈마/ },
+  { id: 'kr_bio', name: '생명과학', url: SEARCH('유전자 OR 세포 OR 신약 OR 단백질 OR 뇌과학'),
+    match: /유전자|세포|단백질|생명|바이러스|면역|뇌|신경|암|백신|치료제|신약|줄기세포|미생물|DNA|생물|바이오/ },
   { id: 'world', name: '세계', url: TOPIC('WORLD') },
   { id: 'nation', name: '사회', url: TOPIC('NATION') },
   { id: 'sports', name: '스포츠', url: TOPIC('SPORTS') },
@@ -31,6 +46,7 @@ const CATEGORIES = [
   // earth-science RSS at all — so 과학 stays one category.
   { id: 'intl_space', name: '해외 우주', url: US_TOPIC('SCIENCE'), lang: 'en' },
   { id: 'intl_earth', name: '해외 지구·환경', url: US_TOPIC('SCIENCE'), lang: 'en' },
+  { id: 'intl_physics', name: '해외 물리', url: US_TOPIC('SCIENCE'), lang: 'en' },
   { id: 'intl_health', name: '해외 건강', url: US_TOPIC('HEALTH'), lang: 'en' },
   { id: 'intl_sports', name: '해외 스포츠', url: US_TOPIC('SPORTS'), lang: 'en' },
   { id: 'intl_ent', name: '해외 연예', url: US_TOPIC('ENTERTAINMENT'), lang: 'en' },
@@ -119,6 +135,9 @@ const PUBLISHER_SOURCES = [
   { cat: 'intl_earth', name: 'Phys.org', url: 'https://phys.org/rss-feed/earth-news/' },
   { cat: 'intl_earth', name: 'NASA Earth', url: 'https://earthobservatory.nasa.gov/feeds/earth-observatory.rss' },
   { cat: 'intl_earth', name: 'The Guardian', url: 'https://www.theguardian.com/environment/climate-crisis/rss' },
+  { cat: 'intl_physics', name: 'Phys.org', url: 'https://phys.org/rss-feed/physics-news/' },
+  { cat: 'intl_physics', name: 'Quanta', url: 'https://www.quantamagazine.org/feed/' },
+  { cat: 'intl_physics', name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/science' },
   { cat: 'intl_health', name: 'BBC', url: 'https://feeds.bbci.co.uk/news/health/rss.xml' },
   { cat: 'intl_health', name: 'NYT', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml' },
   { cat: 'intl_sports', name: 'BBC', url: 'https://feeds.bbci.co.uk/sport/rss.xml' },
@@ -141,6 +160,17 @@ const PUBLISHER_SOURCES = [
   { cat: 'science', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
   { cat: 'science', name: '로봇신문', url: 'https://www.irobotnews.com/rss/allArticle.xml' },
   { cat: 'science', name: '환경일보', url: 'https://www.hkbs.co.kr/rss/allArticle.xml' },
+  // The Korean subcategories are Google searches, and Google carries no pictures.
+  // Pointing the publisher feeds at them as well is what gives those pages
+  // thumbnails: 동아사이언스 covers space and physics, 환경일보 covers earth.
+  { cat: 'kr_space', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
+  { cat: 'kr_space', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
+  { cat: 'kr_earth', name: '환경일보', url: 'https://www.hkbs.co.kr/rss/allArticle.xml' },
+  { cat: 'kr_earth', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
+  { cat: 'kr_physics', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
+  { cat: 'kr_physics', name: '헬로디디', url: 'https://www.hellodd.com/rss/allArticle.xml' },
+  { cat: 'kr_bio', name: '동아사이언스', url: 'https://rss.donga.com/science.xml' },
+  { cat: 'kr_bio', name: '의학신문', url: 'https://www.bosa.co.kr/rss/allArticle.xml' },
   // YouTube publishes a per-channel Atom feed with no key and a thumbnail on every
   // entry — the one source of pictures for 과학 besides 동아사이언스. Channel ids were
   // taken from each page's <link rel="canonical"> and confirmed against the
@@ -529,10 +559,14 @@ async function fetchCategory(cat, now, imageIndex, pub) {
     };
   }
 
-  const items = clusterAndScore([...pub, ...google], now, imageIndex);
+  // A search feed answers the query, not the subject: `우주 OR 위성` matched betting
+  // spam and a university admissions notice. The same filter that keeps the
+  // publisher feeds on topic is applied to the aggregate for the same reason.
+  const kept = cat.match ? google.filter((i) => cat.match.test(i.title)) : google;
+  const items = clusterAndScore([...pub, ...kept], now, imageIndex);
   const withImage = items.filter((i) => i.image).length;
   console.log(`[ok] ${cat.name}: ${items.length} items `
-    + `(pub ${pub.length} + google ${google.length}, ${withImage} with image)`);
+    + `(pub ${pub.length} + google ${kept.length}, ${withImage} with image)`);
   return { id: cat.id, name: cat.name, lang: cat.lang || 'ko', items };
 }
 // A Worker invocation may make at most 50 outbound requests on the free plan, and
@@ -540,11 +574,11 @@ async function fetchCategory(cat, now, imageIndex, pub) {
 // each slice and merges. Measured: publisher feeds answer in 40ms from the edge, so
 // slicing costs almost nothing in wall time.
 //
-// Raised 2 -> 3 on 2026-08-28. Counted, not guessed: at 2 the widest slice needs 54
-// requests (10 categories + 38 publisher feeds + 6 image-only) and silently loses
-// whatever crosses the ceiling. At 3 it is 39, which leaves room for the relay to
-// fall through to its second host on a few categories without going over.
-export const SLICE_COUNT = 3;
+// Counted, not guessed. With 25 categories the widest slice needs 59 requests at 2
+// slices and 48 at 3 — and 48 is not headroom, because a category whose first relay
+// fails spends a second request. At 4 the widest is 31, which absorbs a relay
+// falling through on every category in the slice and still clears the ceiling.
+export const SLICE_COUNT = 4;
 
 // The declared order, and the set of ids that currently exist. The Worker merges
 // slices written by earlier runs, so a slice stored before a category was added or
@@ -590,7 +624,7 @@ export async function collectSlice(index, count = SLICE_COUNT, sharedIndex = nul
     for (const cat of cats) {
       if (!feedsForCategory(cat.id).some((x) => x.url === f.url)) continue;
       if (!byCat.has(cat.id)) byCat.set(cat.id, []);
-      byCat.get(cat.id).push(...items);
+      byCat.get(cat.id).push(...(cat.match ? items.filter((i) => cat.match.test(i.title)) : items));
     }
   }
 
