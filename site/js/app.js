@@ -299,19 +299,44 @@ function saveTrCache() {
   }, 800);
 }
 
-async function gtx(text) {
+// client=gtx now answers 429 ("automated queries") for every caller; client=at
+// serves the same payload from the same host and still sends CORS *. They share
+// one per-IP quota, so switching endpoints alone does not buy any headroom --
+// asking for fewer titles is what keeps the endpoint answering.
+//
+// Titles go out in batches (a repeated q= returns one result per title, in
+// order) and the batches are spaced apart. A 429 parks the whole sweep rather
+// than spending the remaining titles against a block already in place.
+const TR_BATCH = 10;
+const TR_GAP_MS = 900;
+let trBlockedUntil = 0;
+
+async function gtxBatch(texts) {
+  if (Date.now() < trBlockedUntil) throw new Error('rate-limited');
   const url =
-    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=' +
-    encodeURIComponent(text);
+    'https://translate.googleapis.com/translate_a/single?client=at&sl=auto&tl=ko&dt=t' +
+    texts.map((t) => '&q=' + encodeURIComponent(t)).join('');
   const res = await fetch(url);
+  if (res.status === 429) {
+    trBlockedUntil = Date.now() + 10 * 60 * 1000;
+    throw new Error('HTTP 429');
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json();
-  const t = j && j[0] ? j[0].map((s) => s[0]).join('') : '';
-  if (!t) throw new Error('empty');
-  return t;
+  // one q= gives [[[out, in, ..], ..]]; several give one such group per title
+  const groups = texts.length === 1 ? [j[0]] : j[0];
+  const out = (groups || []).map((g) =>
+    Array.isArray(g) && Array.isArray(g[0])
+      ? g.map((x) => x[0]).join('')
+      : Array.isArray(g)
+        ? g[0]
+        : ''
+  );
+  if (out.length !== texts.length) throw new Error('shape');
+  return out;
 }
 
-// Translate the marked titles one at a time to avoid hammering the endpoint.
+// Translate the marked titles in small spaced batches rather than all at once.
 //
 // The guard used to return instead of waiting, which silently abandoned titles:
 // the dashboard, the category page and the pager all call this within a few
@@ -325,22 +350,56 @@ function translatePending(root) {
   return trChain;
 }
 
+// Every category page is built up front, so a document-wide sweep asks for all
+// eleven foreign pages (165 titles) when the reader is looking at one of them.
+// Only the page under the viewport is worth translating; the rest are marked
+// and get swept when they are swiped to, or when "더 보기" adds to them.
+function onScreen(node) {
+  const page = node.closest('.page');
+  if (!page) return true;
+  const box = page.getBoundingClientRect();
+  return box.right > 0 && box.left < (window.innerWidth || 0);
+}
+
 async function translateNow(root) {
   const sweep = async (scope) => {
+    const pending = [];
     for (const node of [...scope.querySelectorAll('[data-tr]')]) {
       const orig = node.getAttribute('data-tr');
-      node.removeAttribute('data-tr');
       if (trCache[orig]) {
+        node.removeAttribute('data-tr');
         node.textContent = trCache[orig];
         continue;
       }
+      // keep the mark: swiping to the page sweeps it then
+      if (!onScreen(node)) continue;
+      pending.push({ node, orig });
+    }
+    for (let i = 0; i < pending.length; i += TR_BATCH) {
+      const chunk = pending.slice(i, i + TR_BATCH);
+      // the same headline shows up in several categories; one slot each
+      const uniq = [...new Set(chunk.map((c) => c.orig))];
+      let got;
       try {
-        const t = await gtx(orig);
-        trCache[orig] = t;
-        node.textContent = t;
-        saveTrCache();
+        got = await gtxBatch(uniq);
       } catch {
-        node.classList.add('untranslated');
+        // leave data-tr in place so a later sweep retries once the block
+        // lifts; clearing it stranded the titles in English for the session
+        for (const { node } of chunk) node.classList.add('untranslated');
+        return;
+      }
+      uniq.forEach((q, n) => {
+        if (got[n]) trCache[q] = got[n];
+      });
+      for (const { node, orig } of chunk) {
+        if (!trCache[orig]) continue;
+        node.removeAttribute('data-tr');
+        node.classList.remove('untranslated');
+        node.textContent = trCache[orig];
+      }
+      saveTrCache();
+      if (i + TR_BATCH < pending.length) {
+        await new Promise((r) => setTimeout(r, TR_GAP_MS));
       }
     }
   };
@@ -3701,6 +3760,19 @@ function syncPageIndicator() {
   });
   const active = document.querySelector('.pagedots .dot.on');
   if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+  translateVisibleSoon();
+}
+
+// syncPageIndicator() runs per animation frame while a swipe is in flight;
+// wait for it to settle so a flick across several pages only translates the
+// one it lands on.
+let trVisibleTimer = 0;
+function translateVisibleSoon() {
+  clearTimeout(trVisibleTimer);
+  trVisibleTimer = setTimeout(() => {
+    const page = pages[currentIndex()];
+    if (page) translatePending(page.node);
+  }, 250);
 }
 
 function buildTabBar() {
