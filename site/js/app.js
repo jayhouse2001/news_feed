@@ -299,27 +299,34 @@ function saveTrCache() {
   }, 800);
 }
 
-// client=gtx now answers 429 ("automated queries") for every caller; client=at
-// serves the same payload from the same host and still sends CORS *. They share
-// one per-IP quota, so switching endpoints alone does not buy any headroom --
-// asking for fewer titles is what keeps the endpoint answering.
+// Two providers, both key-free and CORS-enabled so the page calls them directly.
 //
+// Google first: client=gtx now answers 429 ("automated queries") for every
+// caller, and client=at shares the same per-IP quota, so switching endpoints
+// buys no headroom -- asking for fewer titles is what keeps it answering.
 // Titles go out in batches (a repeated q= returns one result per title, in
-// order) and the batches are spaced apart. A 429 parks the whole sweep rather
-// than spending the remaining titles against a block already in place.
+// order), spaced apart, and a 429 parks Google for ten minutes.
+//
+// MyMemory covers those ten minutes. It did not rate limit at all in testing
+// (12 rapid calls, 12 answers) but it is capped at 5,000 characters a day for
+// anonymous callers -- roughly four screenfuls -- and its wording is a notch
+// below Google's, so it is the fallback and not the default. It translates one
+// title per request and has no batch endpoint.
 const TR_BATCH = 10;
 const TR_GAP_MS = 900;
 let trBlockedUntil = 0;
+let mmBlockedUntil = 0;
 
-async function gtxBatch(texts) {
-  if (Date.now() < trBlockedUntil) throw new Error('rate-limited');
+async function googleBatch(texts) {
   const url =
     'https://translate.googleapis.com/translate_a/single?client=at&sl=auto&tl=ko&dt=t' +
     texts.map((t) => '&q=' + encodeURIComponent(t)).join('');
   const res = await fetch(url);
   if (res.status === 429) {
     trBlockedUntil = Date.now() + 10 * 60 * 1000;
-    throw new Error('HTTP 429');
+    const blocked = new Error('HTTP 429');
+    blocked.rateLimited = true;
+    throw blocked;
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json();
@@ -334,6 +341,46 @@ async function gtxBatch(texts) {
   );
   if (out.length !== texts.length) throw new Error('shape');
   return out;
+}
+
+// Every foreign feed is a US edition, so the pair is fixed; MyMemory has no
+// auto-detect and would reject 'auto' as a source language.
+async function myMemoryOne(text) {
+  const url =
+    'https://api.mymemory.translated.net/get?langpair=en%7Cko&q=' +
+    encodeURIComponent(text);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  // the daily cap and other refusals come back as a non-200 responseStatus
+  if (Number(j.responseStatus) !== 200 || j.quotaFinished) {
+    mmBlockedUntil = Date.now() + 60 * 60 * 1000;
+    throw new Error('mymemory quota');
+  }
+  const t = j.responseData && j.responseData.translatedText;
+  if (!t) throw new Error('empty');
+  return t;
+}
+
+async function myMemoryBatch(texts) {
+  const out = [];
+  for (const t of texts) out.push(await myMemoryOne(t));
+  return out;
+}
+
+async function gtxBatch(texts) {
+  if (Date.now() >= trBlockedUntil) {
+    try {
+      return await googleBatch(texts);
+    } catch (e) {
+      // Only a 429 means Google is unavailable, and that is the case the
+      // fallback exists for. A shape or network error is this code's problem
+      // and should surface rather than quietly spend the MyMemory allowance.
+      if (!e.rateLimited) throw e;
+    }
+  }
+  if (Date.now() < mmBlockedUntil) throw new Error('rate-limited');
+  return myMemoryBatch(texts);
 }
 
 // Translate the marked titles in small spaced batches rather than all at once.
