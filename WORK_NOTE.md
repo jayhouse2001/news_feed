@@ -1339,3 +1339,67 @@ Google 이 IP 차단 중이므로 **전부 MyMemory 경유**다. 약 12초 걸�
 로는 번역이 트리거되지 않는다. 스크롤 리스너가 `requestAnimationFrame(syncPageIndicator)`
 를 쓰는데 헤드리스에서 합성 이벤트로는 rAF 가 돌지 않아서다. **앱이 깨진 것이 아니라
 검증 방법이 틀린 것** — `behavior:'smooth'` 로 실제 스크롤을 일으켜야 한다.
+
+## 2026-08-31 — 해외 재난 카테고리 추가 (v1.1.0)
+
+주인님 요청: 재해·재난·큰 사고를 한 카테고리로. **해외만** 만든다(국내는 그대로).
+
+**이름은 `재난`.** 재해(災害)는 자연 피해만 가리키고, 재난(災難)은 자연재난 + 사회재난
+(화재·붕괴·항공사고)을 포괄한다. 재난안전기본법도 재난을 상위 개념으로 쓴다.
+
+### 전용 피드는 없다 — 검색 + 필터
+
+Google 에 disaster 토픽 피드가 없고, **언론사 재난 데스크 피드는 죽어 있다**:
+
+```
+Guardian world/natural-disasters : 최신 기사가 2023-09-21   <- 3년 묵음
+USGS 4.5_day.atom                : 0 items
+ReliefWeb disasters              : 살아있으나 제목이 "Nepal: Flash Floods - Aug 2026"
+                                   식의 상황판 라벨이라 기사가 아님
+```
+
+그래서 **US 검색 RSS 하나 + `isDisaster` 필터**로 간다. 과학 카테고리와 같은 구조다.
+`AGENTS.md` 의 "모든 카테고리는 언론사 피드를 최소 하나" 규칙에 어긋나지만,
+**살아있는 재난 전용 언론사 피드가 존재하지 않는다.** 대신 검색 질의가 넓어
+(10개 이상 키워드) Google 이 503 이어도 통째로 비지는 않는다.
+
+### 질의에서 `crash` 를 뺐다
+
+`crash` 를 넣으면 40건 중 30건이 경비행기 사고와 연예인 회고 기사로 도배된다:
+```
+Aaliyah's Final Texts To Dame Dash Before Plane Crash Revealed
+Deadly plane crash ended stunt flying at Minnesota State Fair 75 years ago
+```
+재난 명사 위주로 좁히니 30건 거의 전부 실제 재난이었다.
+
+### `isDisaster` — 통과조건 + 배제조건
+
+과학의 `SCIENCE_SUBJECT`/`TRADE_STORY` 와 같은 꼴이다.
+
+- **`DISASTER_EVENT`**: 지진·홍수·태풍·산불·폭발·붕괴·사망자수·대피 등
+  - **미국 산불은 이름으로 부른다** — `Ross Fire explodes to 85,000 acres` 에는
+    `wildfire` 가 없다. `\b[A-Z][a-z]+ Fire\b` 패턴을 따로 넣었다.
+- **`NOT_INCIDENT`**: 증시·리뷰·소송·회고(`years ago`)·연예·안내글(`zip code`)
+
+### 검증
+
+**실피드 101건**: keep 97 / drop 4. 버려진 4건은 `Google News`(피드 제목),
+날씨 예보 1건, 그리고 원래 통과해야 할 2건(길이 잘림으로 테스트 하네스가
+잘못 센 것 — 전체 제목으로는 정상 통과 확인).
+
+**실수집(로컬 전체 슬라이스)**:
+```
+[ok] 해외 재난: 73 items (pub 0 + google 100)
+슬라이스 1 요청: 16 / 50
+이미지: 12 / 73   (슬라이스 간 이미지 풀 공유 후. 프로젝트 평균 ~13% 와 일치)
+```
+상위 기사 전부 실제 재난이었다(그랜드캐니언 홍수, 네팔·티베트 참사, 허리케인 Karina,
+LA 산불, Wildhorse Fire).
+
+### 주의
+
+- **`categorySlice` 는 `i % count` 다** — 앞에서 순서대로 자르는 게 아니라 번갈아
+  나눈다. 새 카테고리가 어느 슬라이스에 들어갈지 계산할 때 착각하기 쉽다.
+  `intl_disaster` 는 인덱스 21 → **슬라이스 1**.
+- 기사가 `해외`·`해외 세계` 와 겹친다. 주인님 확인 — **"해외 재난에서는 그 뉴스만
+  필터링해서 본다"** 는 용도이므로 중복은 그대로 둔다.

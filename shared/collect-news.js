@@ -9,6 +9,7 @@ const SEARCH = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent
 
 const US_EDITION = 'hl=en-US&gl=US&ceid=US:en';
 const US_TOPIC = (t) => `https://news.google.com/rss/headlines/section/topic/${t}?${US_EDITION}`;
+const US_SEARCH = (q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&${US_EDITION}`;
 
 const CATEGORIES = [
   { id: 'top', name: '주요', url: `https://news.google.com/rss?${EDITION}` },
@@ -39,6 +40,12 @@ const CATEGORIES = [
   { id: 'intl_health', name: '해외 건강', url: US_TOPIC('HEALTH'), lang: 'en' },
   { id: 'intl_sports', name: '해외 스포츠', url: US_TOPIC('SPORTS'), lang: 'en' },
   { id: 'intl_ent', name: '해외 연예', url: US_TOPIC('ENTERTAINMENT'), lang: 'en' },
+  // Disasters have no topic feed of their own, so this is a search. Google has
+  // no "disaster" desk and the outlets that do publish one are dead -- the
+  // Guardian's natural-disasters feed last updated in 2023 -- so the aggregate
+  // is the only live source, filtered by isDisaster.
+  { id: 'intl_disaster', name: '해외 재난', lang: 'en', disaster: true,
+    url: US_SEARCH('earthquake OR wildfire OR flood OR hurricane OR typhoon OR volcano OR landslide OR tsunami OR "death toll" OR evacuated OR disaster when:1d') },
 ];
 
 // Google's feed carries no images and its links never resolve to the
@@ -196,6 +203,36 @@ const TRADE_STORY = new RegExp([
 ].join('|'));
 
 const isScience = (title) => SCIENCE_SUBJECT.test(title) && !TRADE_STORY.test(title);
+
+// Same shape as the science pair, and for the same reason: a search answers the
+// query rather than the subject. "crash" alone pulled in celebrity retrospectives
+// and a seventy-five-year-old airshow, so the query names disasters and this
+// keeps out the pieces that only borrow the words.
+const DISASTER_EVENT = new RegExp([
+  'earthquake|quake|aftershock|tsunami|volcan|erupt|magnitude \d',
+  'flood|deluge|landslide|mudslide|avalanche|sinkhole|torrent|monsoon|downpour',
+  'hurricane|typhoon|cyclone|tornado|tropical storm|storm surge|blizzard',
+  'heatwave|heat wave|drought|wildfire|bushfire',
+  // US wildfires are named rather than described: "Ross Fire explodes to 85,000 acres"
+  '\b[A-Z][a-z]+ Fire\b|fire (?:burns|burning|scorches|explodes|grows|rages|destroys)',
+  'acres burned|containment',
+  'disaster|catastrophe|devastat|death toll|casualties|evacuat|displaced|stranded',
+  'rescuer|rescue effort|state of emergency|missing after|unaccounted for',
+  'derail|capsiz|shipwreck|collapse|explosion|blast|gas leak|chemical spill',
+  'oil spill|radiation leak|meltdown',
+  'famine|epidemic|pandemic|outbreak|cholera|ebola',
+].join('|'), 'i');
+
+const NOT_INCIDENT = new RegExp([
+  'stock|shares|market|earnings|revenue|\bipo\b|bitcoin|crypto|bubble',
+  'review|recap|trailer|season \d|episode|movie|film|series|album|anniversary',
+  'lawsuit|verdict|sentenced|\btrial\b|indict|\bplea\b|settlement|deny responsibility',
+  'years ago|decades ago|history of|looking back|throwback|tragic story',
+  'recipe|fashion|celebrity|dating|wedding|divorce',
+  'zip code|know your|how to prepare|guide to',
+].join('|'), 'i');
+
+const isDisaster = (title) => DISASTER_EVENT.test(title) && !NOT_INCIDENT.test(title);
 
 const MAX_PER_SOURCE = 20;
 const MAX_PER_SOURCE_WITH_MEDIA = 45;
@@ -567,7 +604,11 @@ async function fetchCategory(cat, now, imageIndex, pub) {
   // A search feed answers the query, not the subject: `우주 OR 위성` matched betting
   // spam and a university admissions notice. The same filter that keeps the
   // publisher feeds on topic is applied to the aggregate for the same reason.
-  const onTopic = (list) => (cat.science ? list.filter((i) => isScience(i.title)) : list);
+  const onTopic = (list) => {
+    if (cat.science) return list.filter((i) => isScience(i.title));
+    if (cat.disaster) return list.filter((i) => isDisaster(i.title));
+    return list;
+  };
   const kept = cat.match ? google.filter((i) => cat.match.test(i.title)) : google;
   const items = clusterAndScore(onTopic([...pub, ...kept]), now, imageIndex);
   const withImage = items.filter((i) => i.image).length;
