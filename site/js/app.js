@@ -326,10 +326,11 @@ function unavailable(msg) {
   return e;
 }
 
-// MyMemory refuses a spent allowance in the body rather than the status, and
-// its failures are unlikely to clear within a few minutes, so it parks longer.
-function mmDown(msg) {
-  mmBlockedUntil = Date.now() + 60 * 60 * 1000;
+// A spent allowance is worth waiting out; a dropped request is not. Parking
+// the fallback for an hour over one ERR_NETWORK_CHANGED left the titles in
+// English for the rest of the session even though MyMemory was answering.
+function mmDown(msg, park) {
+  if (park) mmBlockedUntil = Date.now() + 60 * 60 * 1000;
   return new Error('mymemory ' + msg);
 }
 
@@ -379,16 +380,37 @@ async function myMemoryOne(text) {
   const j = await res.json();
   // the daily cap and other refusals come back as a non-200 responseStatus
   if (Number(j.responseStatus) !== 200 || j.quotaFinished) {
-    throw mmDown('quota');
+    throw mmDown('quota', true);
   }
   const t = j.responseData && j.responseData.translatedText;
   if (!t) throw mmDown('empty');
   return t;
 }
 
+// Resolves to one entry per input, using '' for a title it could not get, so
+// a failure part-way through a batch keeps the titles already translated
+// rather than throwing them away with the rest.
 async function myMemoryBatch(texts) {
   const out = [];
-  for (const t of texts) out.push(await myMemoryOne(t));
+  for (const t of texts) {
+    let got = '';
+    try {
+      got = await myMemoryOne(t);
+    } catch {
+      // a dropped connection is worth one more go; a refused allowance is not
+      if (Date.now() < mmBlockedUntil) {
+        out.push('');
+        continue;
+      }
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        got = await myMemoryOne(t);
+      } catch {
+        got = '';
+      }
+    }
+    out.push(got);
+  }
   return out;
 }
 
