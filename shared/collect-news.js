@@ -538,8 +538,13 @@ const RELAYS = [
 // far side and matches nothing: `q=정치 when:1d` returns 0 where `q=정치` returns 104.
 // Dropping the operator costs nothing — the feed is ordered by recency anyway and
 // the collector scores on pubDate.
+//
+// The separator has to cover %20 as well as a space or a plus: SEARCH encodes
+// the space as + when it builds the query by hand, but US_SEARCH runs it
+// through encodeURIComponent, which writes %20 -- and the operator then
+// survived the strip, which is exactly the case this function exists to avoid.
 function relayUrl(base, feedUrl) {
-  return base + encodeURIComponent(feedUrl.replace(/(\s|\+)when(:|%3A)1d/gi, ''));
+  return base + encodeURIComponent(feedUrl.replace(/(%20|\s|\+)when(:|%3A)1d/gi, ''));
 }
 
 // Shaped to look like the RSS the rest of the code expects, so parseRss stays the
