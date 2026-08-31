@@ -305,7 +305,7 @@ function saveTrCache() {
 // caller, and client=at shares the same per-IP quota, so switching endpoints
 // buys no headroom -- asking for fewer titles is what keeps it answering.
 // Titles go out in batches (a repeated q= returns one result per title, in
-// order), spaced apart, and a 429 parks Google for ten minutes.
+// order), spaced apart, and a refusal parks Google for ten minutes.
 //
 // MyMemory covers those ten minutes. It did not rate limit at all in testing
 // (12 rapid calls, 12 answers) but it is capped at 5,000 characters a day for
@@ -317,18 +317,38 @@ const TR_GAP_MS = 900;
 let trBlockedUntil = 0;
 let mmBlockedUntil = 0;
 
+// Marks the errors that mean "this provider is not answering, try the other
+// one" and parks Google, as opposed to a bug in this file which must surface.
+function unavailable(msg) {
+  trBlockedUntil = Date.now() + 10 * 60 * 1000;
+  const e = new Error(msg);
+  e.providerDown = true;
+  return e;
+}
+
+// MyMemory refuses a spent allowance in the body rather than the status, and
+// its failures are unlikely to clear within a few minutes, so it parks longer.
+function mmDown(msg) {
+  mmBlockedUntil = Date.now() + 60 * 60 * 1000;
+  return new Error('mymemory ' + msg);
+}
+
+// A rate-limited Google answers with an HTML block page that carries no
+// Access-Control-Allow-Origin, so the browser rejects it as a CORS failure and
+// fetch() rejects with "Failed to fetch" -- the status is never visible to us.
+// Reading res.status therefore cannot detect the block from a page: any failure
+// here has to count as "Google is unavailable" and hand over to the fallback.
 async function googleBatch(texts) {
   const url =
     'https://translate.googleapis.com/translate_a/single?client=at&sl=auto&tl=ko&dt=t' +
     texts.map((t) => '&q=' + encodeURIComponent(t)).join('');
-  const res = await fetch(url);
-  if (res.status === 429) {
-    trBlockedUntil = Date.now() + 10 * 60 * 1000;
-    const blocked = new Error('HTTP 429');
-    blocked.rateLimited = true;
-    throw blocked;
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw unavailable('fetch failed');
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw unavailable(`HTTP ${res.status}`);
   const j = await res.json();
   // one q= gives [[[out, in, ..], ..]]; several give one such group per title
   const groups = texts.length === 1 ? [j[0]] : j[0];
@@ -339,7 +359,7 @@ async function googleBatch(texts) {
         ? g[0]
         : ''
   );
-  if (out.length !== texts.length) throw new Error('shape');
+  if (out.length !== texts.length) throw unavailable('shape');
   return out;
 }
 
@@ -349,16 +369,20 @@ async function myMemoryOne(text) {
   const url =
     'https://api.mymemory.translated.net/get?langpair=en%7Cko&q=' +
     encodeURIComponent(text);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw mmDown('fetch failed');
+  }
+  if (!res.ok) throw mmDown(`HTTP ${res.status}`);
   const j = await res.json();
   // the daily cap and other refusals come back as a non-200 responseStatus
   if (Number(j.responseStatus) !== 200 || j.quotaFinished) {
-    mmBlockedUntil = Date.now() + 60 * 60 * 1000;
-    throw new Error('mymemory quota');
+    throw mmDown('quota');
   }
   const t = j.responseData && j.responseData.translatedText;
-  if (!t) throw new Error('empty');
+  if (!t) throw mmDown('empty');
   return t;
 }
 
@@ -373,10 +397,10 @@ async function gtxBatch(texts) {
     try {
       return await googleBatch(texts);
     } catch (e) {
-      // Only a 429 means Google is unavailable, and that is the case the
-      // fallback exists for. A shape or network error is this code's problem
-      // and should surface rather than quietly spend the MyMemory allowance.
-      if (!e.rateLimited) throw e;
+      // Anything googleBatch marks as providerDown means Google is not
+      // answering; that is what the fallback exists for. An unmarked error is
+      // a bug in this file and must surface rather than be papered over.
+      if (!e.providerDown) throw e;
     }
   }
   if (Date.now() < mmBlockedUntil) throw new Error('rate-limited');

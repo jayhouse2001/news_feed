@@ -1207,3 +1207,74 @@ Trump Administration's Blacklisting of Anthropic  ->  "인류학 블랙리스트
 
 여전히 **다중 `q=` 실제 응답 형식은 미검증**이다(Google 이 계속 429 라 확인 못 함).
 틀리면 `shape` 로 던져 원문이 보일 뿐 앱은 깨지지 않는다.
+
+## 2026-08-31 — 폴백이 실제로는 동작하지 않았다 (v1.0.4)
+
+v1.0.3 을 배포하고도 아이폰에서 번역이 안 됐다. 배포는 정상이었다(라이브
+`app.js` 에 `client=at`·`myMemoryOne`·`onScreen` 전부 존재, `client=gtx` 없음).
+**코드가 틀렸다.**
+
+### 브라우저에서 재현
+
+라이브 사이트를 헤드리스로 열어 해외 페이지로 이동:
+
+```
+links on page  : 15
+data-tr left   : 15      <- 하나도 번역 안 됨
+untranslated   : 10
+hangul titles  : 0
+onScreen works : left=0 right=492 innerW=492 -> onScreen=true   <- 스코프는 정상
+```
+
+페이지의 함수를 직접 불러 보니:
+
+```
+gtxBatch(['Hello world news'])   -> THREW: Failed to fetch
+googleBatch(...)                 -> THREW: Failed to fetch | rateLimited=false
+myMemoryOne('Hello world news')  -> OK -> Hello World          <- 폴백은 멀쩡
+```
+
+### 원인: 429 를 브라우저에서는 볼 수 없다
+
+`Network.loadingFailed` 로 잡은 실제 사유:
+
+```
+net::ERR_FAILED  corsError={"corsError":"MissingAllowOriginHeader"}
+```
+
+**차단당한 Google 은 HTML 차단 페이지를 돌려주는데 거기엔
+`Access-Control-Allow-Origin` 이 없다.** 그래서 브라우저는 응답을 CORS 위반으로
+막아버리고, `fetch()` 는 상태코드 대신 `TypeError: Failed to fetch` 로 거부된다.
+**페이지에서는 429 라는 사실 자체를 알 수 없다.**
+
+`res.status === 429` 로 `rateLimited` 를 세우게 짜놨으니 그 코드는 영원히 실행되지
+않는다. `rateLimited` 가 false 이므로 `gtxBatch` 는 다시 던지고 —
+**MyMemory 는 멀쩡한데 호출조차 되지 않았다.**
+
+PowerShell·Node 로는 429 가 그대로 보여서(CORS 는 브라우저만 강제한다) 끝까지
+못 잡았다. **번역 경로 검증은 반드시 브라우저에서 할 것.**
+
+### 수정
+
+- `res.status` 로 차단을 판정하지 않는다. **`googleBatch` 의 모든 실패**
+  (fetch 거부·비 2xx·shape 불일치)를 `unavailable()` 로 표시해 폴백시킨다.
+- 진짜 코드 버그(`TypeError` 등)는 `providerDown` 표시가 없으므로 그대로 올라온다 —
+  폴백으로 덮이지 않는다.
+- MyMemory 도 같은 위험이 있어(한도 소진 시 응답이 어떻게 올지 모른다)
+  `mmDown()` 으로 통일했다. 실패하면 1시간 park.
+
+### 검증
+
+폴백 분기 8가지 전부 통과. 특히:
+```
+2) Google CORS 가려진 429  -> MyMemory 3건 번역   <- 기존 버그 케이스
+5) 진짜 코드 버그(TypeError) -> 그대로 throw, mymemory 호출 0
+```
+
+### 교훈
+
+- **브라우저에서 크로스오리진 요청의 상태코드는 못 볼 수도 있다.** 차단 페이지는
+  CORS 헤더를 안 붙이는 것이 보통이라 `res.status` 분기는 죽은 코드가 된다.
+  "응답이 오면 실패"가 아니라 **"실패하면 전부 폴백"**이 맞다.
+- **CLI 로 검증한 것은 브라우저 검증이 아니다.** curl/Node 는 CORS 를 강제하지
+  않으므로 같은 요청이 성공한다.
