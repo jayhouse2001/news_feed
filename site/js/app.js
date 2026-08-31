@@ -443,6 +443,24 @@ function translatePending(root) {
   return trChain;
 }
 
+// A foreign page shows the original headlines until the translations land, and
+// with the fallback in play that can take a dozen seconds -- long enough to read
+// as broken. The category page subscribes to this and says what is happening.
+const trWatchers = new Set();
+function onTrProgress(fn) {
+  trWatchers.add(fn);
+  return () => trWatchers.delete(fn);
+}
+function reportTr(state) {
+  for (const fn of trWatchers) {
+    try {
+      fn(state);
+    } catch {
+      // a broken listener must not stop the sweep
+    }
+  }
+}
+
 // Every category page is built up front, so a document-wide sweep asks for all
 // eleven foreign pages (165 titles) when the reader is looking at one of them.
 // Only the page under the viewport is worth translating; the rest are marked
@@ -468,6 +486,7 @@ async function translateNow(root) {
       if (!onScreen(node)) continue;
       pending.push({ node, orig });
     }
+    if (pending.length) reportTr({ phase: 'working', left: pending.length });
     for (let i = 0; i < pending.length; i += TR_BATCH) {
       const chunk = pending.slice(i, i + TR_BATCH);
       // the same headline shows up in several categories; one slot each
@@ -477,8 +496,19 @@ async function translateNow(root) {
         got = await gtxBatch(uniq);
       } catch {
         // leave data-tr in place so a later sweep retries once the block
-        // lifts; clearing it stranded the titles in English for the session
-        for (const { node } of chunk) node.classList.add('untranslated');
+        // lifts; clearing it stranded the titles in English for the session.
+        // Everything still pending is stuck, not just this chunk: the sweep
+        // gives up here and the parked provider will refuse the rest too.
+        for (const { node } of pending.slice(i)) node.classList.add('untranslated');
+        reportTr({ phase: 'failed', left: pending.length - i });
+        return;
+      }
+      if (!got.some(Boolean)) {
+        // every title in the batch came back empty: the provider is refusing
+        // even though it did not throw, so stop rather than sweep the page
+        // clean of marks with nothing to show for it
+        for (const { node } of pending.slice(i)) node.classList.add('untranslated');
+        reportTr({ phase: 'failed', left: pending.length - i });
         return;
       }
       uniq.forEach((q, n) => {
@@ -491,6 +521,8 @@ async function translateNow(root) {
         node.textContent = trCache[orig];
       }
       saveTrCache();
+      const left = pending.length - Math.min(i + TR_BATCH, pending.length);
+      reportTr(left ? { phase: 'working', left } : { phase: 'done', left: 0 });
       if (i + TR_BATCH < pending.length) {
         await new Promise((r) => setTimeout(r, TR_GAP_MS));
       }
@@ -1143,6 +1175,39 @@ function buildCategoryPage(cat) {
   inner.appendChild(sortRow);
 
   const translate = cat.lang && cat.lang !== 'ko';
+
+  // Only a foreign page has anything to report, and only while titles are
+  // still in the original: a finished page says nothing rather than carrying
+  // a permanent "번역 완료" badge nobody needs.
+  if (translate) {
+    const trBadge = el('span', 'tr-status');
+    sortBtn.after(trBadge);
+    const paint = (st) => {
+      const left = page.querySelectorAll('[data-tr]').length;
+      const failed = st ? st.phase === 'failed'
+        : page.querySelectorAll('.untranslated').length > 0;
+      trBadge.classList.toggle('failed', failed);
+      if (!left) {
+        // nothing outstanding: a finished page says nothing
+        trBadge.hidden = true;
+      } else if (failed) {
+        trBadge.hidden = false;
+        trBadge.textContent = `번역 실패 ${left}건 · 잠시 후 재시도`;
+      } else {
+        trBadge.hidden = false;
+        trBadge.textContent = `번역 중… ${left}건`;
+      }
+    };
+    paint(null);
+    const stop = onTrProgress((st) => {
+      // the sweep is document-wide; drop the listener with the page
+      if (!page.isConnected) {
+        stop();
+        return;
+      }
+      paint(st);
+    });
+  }
   if (!items.length) {
     inner.appendChild(el('p', 'placeholder', '표시할 기사가 없습니다.'));
   } else {
