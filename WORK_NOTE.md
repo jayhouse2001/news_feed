@@ -1450,3 +1450,52 @@ sweep 이 거기서 멈추므로 나머지도 똑같이 막힌 상태다.
 국내 페이지: 배지 없음 ✓
 ```
 폴백 8분기 회귀 테스트도 전부 통과.
+
+## 2026-08-31 — back swipe 로 돌아오면 탭바가 떠 있던 문제 (v1.1.2)
+
+기사를 보다 back swipe 로 대시보드에 돌아오면 하단 탭바가 위로 올라오고
+그 아래가 빈 공간이 됐다.
+
+### 원인: `height: 100%` 가 iOS 툴바 변화를 못 따라간다
+
+`body` 는 `display:flex; flex-direction:column; overflow:hidden` 이고 `tabbar` 는
+`flex:none` 이라 **body 박스의 맨 아래**에 붙는다. 즉 **body 높이 = 화면 높이**가
+전제인데, `html, body { height: 100% }` 는 iOS 에서 이걸 보장하지 못한다.
+
+- 기사를 열면 Safari 툴바가 펼쳐지며 뷰포트가 줄어든다
+- back swipe 는 페이지를 **bfcache 에서 복원**한다 — body 는 **캐시될 당시 높이**를 유지
+- 그 결과 탭바가 화면 아래가 아닌 엉뚱한 위치에 붙고 아래가 빈다
+
+브라우저 재현(body 844 로 굳은 채 뷰포트 760):
+```
+innerH=760  bodyH=844  tabbarTop=792  tabbarBottom=844  gap=-84
+```
+탭바가 화면 밖 84px 지점까지 밀려난다.
+
+**앱은 이걸 고칠 수단이 없었다.** `resize` 는 `pager.scrollLeft` 만, `pageshow` 는
+스크롤 위치만 손댄다 — 둘 다 높이를 건드리지 않는다. 실측으로 두 이벤트를 모두
+발생시켜도 `gap=-84` 그대로였다. 게다가 **bfcache 복원 때 iOS 는 `resize` 를 안 쏘는
+경우가 많아** 그 보정마저 돌지 않는다.
+
+### 수정
+
+```css
+html, body { height: 100%; }          /* 폴백 */
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }      /* 툴바를 따라감 */
+}
+```
+
+`dvh` 는 iOS 16.4+ 다. 그 아래 버전에는 JS 폴백을 뒀다 — `CSS.supports` 로 갈라서
+`visualViewport.height` 를 body 에 직접 박고 `pageshow`/`resize`/`visualViewport resize`
+에서 갱신한다. **`dvh` 가 되는 환경에서는 인라인 스타일을 아예 건드리지 않는다**(실측 `""`).
+
+### 검증 (브라우저)
+
+뷰포트를 752/760/700/844/788 로 바꿔가며, bfcache 복원(`pageshow{persisted:true}`)까지.
+
+```
+dvh 경로   : 전 구간 gap=0, body.style.height=""      (CSS 가 처리)
+폴백 경로  : 전 구간 gap=0, inline="760px" 등으로 추종  (CSS.supports 를 false 로 위장)
+배포본(수정 전) : gap=-84  <- 같은 테스트로 버그 재현됨
+```

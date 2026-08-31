@@ -5347,6 +5347,26 @@ async function main() {
   window.addEventListener('pageshow', (e) => {
     if (e.persisted) restoreViewState();
   });
+
+  // Below iOS 16.4 there is no dvh to follow the toolbar, and a bfcache restore
+  // often arrives without a resize event, so the body keeps the height it was
+  // cached at and the tab bar sits above the bottom of the screen. Pin the
+  // measured viewport height for that case only; where dvh works the CSS wins
+  // and this stays out of the way.
+  if (!CSS.supports('height', '100dvh')) {
+    const pinHeight = () => {
+      const h = (window.visualViewport && window.visualViewport.height)
+        || window.innerHeight;
+      document.body.style.height = `${h}px`;
+      pager.scrollLeft = currentIndex() * pager.clientWidth;
+    };
+    window.addEventListener('pageshow', pinHeight);
+    window.addEventListener('resize', pinHeight);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', pinHeight);
+    }
+    pinHeight();
+  }
 }
 
 main();

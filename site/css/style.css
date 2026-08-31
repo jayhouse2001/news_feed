@@ -29,7 +29,16 @@
 
 * { box-sizing: border-box; }
 
+/* The bar sits at the bottom of the body box, so the body has to track the
+   viewport exactly. height:100% does not on iOS: Safari resolves it once and
+   keeps it, so returning from an article by back-swipe restores the page with
+   the height it was cached at while the toolbar has since changed. The bar then
+   lands short of the screen and leaves a band of empty space under it. dvh
+   follows the toolbar; the percentage stays as the fallback for iOS < 16.4. */
 html, body { height: 100%; }
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
+}
 
 body {
   margin: 0;
