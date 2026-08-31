@@ -1318,3 +1318,24 @@ throw 해서 **이미 번역된 앞의 결과까지 통째로 버렸다.**
 
 **park 은 "기다리면 풀리는 것"에만 걸어야 한다.** 한도 소진은 기다릴 가치가 있지만
 네트워크 끊김은 즉시 재시도가 맞다. 둘을 같이 묶으면 폴백이 있으나 마나가 된다.
+
+### v1.0.5 브라우저 실검증 (라이브 사이트)
+
+**실제 스와이프(`scrollTo({behavior:'smooth'})`)로 해외 페이지에 진입** — 이후 아무것도
+건드리지 않고 앱이 알아서 번역하는지만 관찰했다.
+
+```
+t+2s   data-tr=15  hangul=0/15
+t+6s   data-tr=15  hangul=0/15
+t+8s   data-tr=5   hangul=10/15    <- 배치 10건 완료
+t+12s  data-tr=0   hangul=15/15    <- 전부 번역
+sample: 미국은 몇 주 만에 처음으로 알려진 공격에서 라락 섬의 이란 발사대를 공격합니다.
+```
+
+Google 이 IP 차단 중이므로 **전부 MyMemory 경유**다. 약 12초 걸린다(배치 10건 →
+0.9초 대기 → 나머지 5건, MyMemory 는 제목당 1요청이라 15요청).
+
+**검증 방법 주의**: `pager.scrollLeft = n*width` + `dispatchEvent(new Event('scroll'))`
+로는 번역이 트리거되지 않는다. 스크롤 리스너가 `requestAnimationFrame(syncPageIndicator)`
+를 쓰는데 헤드리스에서 합성 이벤트로는 rAF 가 돌지 않아서다. **앱이 깨진 것이 아니라
+검증 방법이 틀린 것** — `behavior:'smooth'` 로 실제 스크롤을 일으켜야 한다.
